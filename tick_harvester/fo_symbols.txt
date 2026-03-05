@@ -1,0 +1,246 @@
+# fo_symbols.txt
+# ==============
+# One trading symbol per line.  Loaded at boot by fetch_dynamic_scrip_codes().
+#
+# Rules:
+#   • Case-insensitive (RELIANCE == reliance)
+#   • Blank lines and lines starting with '#' are ignored
+#   • Symbol must match the 'TradingSymbol' field in sharekhan.master("NC")
+#     or sharekhan.master("BC") exactly (after uppercasing)
+#
+# Verification tip  — run this once to dump the full NC master and inspect
+# the exact field names / symbol strings your API key returns:
+#
+#   python3 - <<'EOF'
+#   import json
+#   from SharekhanApi.sharekhanConnect import SharekhanConnect
+#   cfg = json.load(open("config.json"))
+#   sk  = SharekhanConnect(cfg["api_key"], cfg["access_token"])
+#   rows = sk.master("NC")
+#   if isinstance(rows, str): rows = json.loads(rows)
+#   if isinstance(rows, dict): rows = next(v for v in rows.values() if isinstance(v,list))
+#   # Print first 10 rows to see field names
+#   for r in rows[:10]: print(r)
+#   EOF
+#
+# SENSEX is the ONLY symbol fetched from BSE (exchange=BC).
+# All other symbols below are fetched from NSE Cash (exchange=NC).
+# ────────────────────────────────────────────────────────────────────────────
+
+# ── NSE Indices ──────────────────────────────────────────────────────────────
+# Note: verify the exact string in your master — could be "NIFTY", "NIFTY 50",
+#       "NIFTY50" or "CNX NIFTY" depending on the API version.
+NIFTY
+BANKNIFTY
+
+# ── BSE Index (fetched from BC master) ───────────────────────────────────────
+SENSEX
+
+# ── F&O Eligible Equities  (NSE Cash — 226 stocks, SEBI list 2024-25) ───────
+AARTIIND
+ABB
+ABBOTINDIA
+ABCAPITAL
+ABFRL
+ACC
+ADANIENT
+ADANIPORTS
+ADANIPOWER
+ATGL
+AIAENG
+AJANTPHARM
+ALKEM
+AMBER
+AMBUJACEM
+ANGELONE
+APLAPOLLO
+APOLLOHOSP
+APOLLOTYRE
+ASHOKLEY
+ASIANPAINT
+ASTRAL
+ATUL
+AUBANK
+AUROPHARMA
+AXISBANK
+BAJAJ-AUTO
+BAJAJFINSV
+BAJAJHLDNG
+BAJFINANCE
+BALKRISIND
+BANDHANBNK
+BANKBARODA
+BATAINDIA
+BEL
+BERGEPAINT
+BHARATFORG
+BHARTIARTL
+BHEL
+BIOCON
+BPCL
+BRITANNIA
+BSOFT
+CANBK
+CANFINHOME
+CASTROLIND
+CDSL
+CESC
+CGPOWER
+CHAMBLFERT
+CHOLAFIN
+CIPLA
+COALINDIA
+COFORGE
+COLPAL
+CONCOR
+COROMANDEL
+CROMPTON
+CUB
+CUMMINSIND
+DABUR
+DALBHARAT
+DEEPAKNTR
+DELTACORP
+DELHIVERY
+DIVISLAB
+DIXON
+DLF
+DRREDDY
+EICHERMOT
+ESCORTS
+EXIDEIND
+FEDERALBNK
+GAIL
+GLENMARK
+GMRINFRA
+GNFC
+GODREJCP
+GODREJIND
+GODREJPROP
+GRANULES
+GRAPHITE
+GRASIM
+GSFC
+GSPL
+GUJGASLTD
+HAVELLS
+HCLTECH
+HDFCAMC
+HDFCBANK
+HDFCLIFE
+HEROMOTOCO
+HFCL
+HINDCOPPER
+HINDPETRO
+HINDUNILVR
+HONAUT
+IBULHSGFIN
+ICICIBANK
+ICICIGI
+ICICIPRULI
+IEX
+IGL
+INDHOTEL
+INDIAMART
+INDIGO
+INDUSINDBK
+INDUSTOWER
+INFY
+IOB
+IOC
+IPCALAB
+IRB
+IRCTC
+IRFC
+ITC
+JKCEMENT
+JSWENERGY
+JSWSTEEL
+JUBLFOOD
+JUBLINGREA
+KAJARIACER
+KANSAINER
+KOTAKBANK
+KPITTECH
+LALPATHLAB
+LAURUSLABS
+LICHSGFIN
+LICI
+LINDEINDIA
+LT
+LTIM
+LTTS
+LUPIN
+M&M
+M&MFIN
+MANAPPURAM
+MARICO
+MARUTI
+MCX
+METROPOLIS
+MFSL
+MGL
+MPHASIS
+MRF
+MUTHOOTFIN
+NATIONALUM
+NAUKRI
+NAVINFLUOR
+NBCC
+NCC
+NESTLEIND
+NHPC
+NMDC
+NTPC
+OBEROIRLTY
+OFSS
+OIL
+ONGC
+PAGEIND
+PEL
+PERSISTENT
+PETRONET
+PFC
+PIDILITEIND
+PIIND
+PNB
+POWERGRID
+PVRINOX
+RAIN
+RAMCOCEM
+RBLBANK
+RECLTD
+RELIANCE
+SAIL
+SBICARD
+SBILIFE
+SBIN
+SHREECEM
+SIEMENS
+SRF
+SUNPHARMA
+SUNTV
+SYNGENE
+TATACHEM
+TATACOMM
+TATACONSUM
+TATAMOTORS
+TATAPOWER
+TATASTEEL
+TCS
+TECHM
+TIINDIA
+TITAN
+TORNTPHARM
+TORNTPOWER
+TRENT
+TVSMOTOR
+UBL
+ULTRACEMCO
+UPL
+VEDL
+VOLTAS
+WIPRO
+YESBANK
+ZEEL
+ZYDUSLIFE

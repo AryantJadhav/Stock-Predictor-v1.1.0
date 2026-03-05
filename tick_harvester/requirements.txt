@@ -1,0 +1,5 @@
+# Sharekhan official SDK
+shareconnect
+
+# WebSocket engine  (shareconnect depends on this; pin a stable version)
+websocket-client>=1.6.0,<2.0.0

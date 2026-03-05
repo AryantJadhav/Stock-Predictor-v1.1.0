@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  tick_harvester.service
+#  systemd unit file for the Sharekhan Tick Harvester
+#
+#  INSTALLATION (on the EC2 Ubuntu instance):
+#
+#  1.  Copy this file to the systemd directory:
+#          sudo cp tick_harvester.service /etc/systemd/system/
+#
+#  2.  Reload systemd and enable the service:
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable tick_harvester
+#
+#  3.  Start the service:
+#          sudo systemctl start tick_harvester
+#
+#  4.  Check logs in real-time:
+#          sudo journalctl -u tick_harvester -f
+#          # or read the local log file:
+#          tail -f /home/ubuntu/tick_harvester/harvester.log
+#
+#  5.  Stop the service (triggers SIGTERM → graceful flush):
+#          sudo systemctl stop tick_harvester
+#
+#  DAILY ACCESS-TOKEN REFRESH  (Sharekhan tokens expire each day):
+#  Add this cron job to refresh the token before market open (08:45 IST):
+#
+#      sudo crontab -u ubuntu -e
+#      # Append:
+#      15 3 * * 1-5  /home/ubuntu/tick_harvester/venv/bin/python \
+#                    /home/ubuntu/tick_harvester/auth_helper.py \
+#                    --request-token "PASTE_NEW_REQUEST_TOKEN_HERE" \
+#                    && sudo systemctl restart tick_harvester
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=Sharekhan Live Tick Harvester
+Documentation=https://github.com/Sharekhan-API/shareconnectpython
+
+# Start only after the network stack is fully up
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Replace 'ubuntu' with whatever Linux user owns the project files
+User=ubuntu
+Group=ubuntu
+
+# Absolute path to the project directory on EC2
+WorkingDirectory=/home/ubuntu/tick_harvester
+
+# Use the venv Python which has shareconnect installed
+ExecStart=/home/ubuntu/tick_harvester/venv/bin/python \
+          /home/ubuntu/tick_harvester/tick_harvester.py
+
+# Pass secrets as environment variables instead of writing them to config.json
+# (Optional — config.json works too)
+# EnvironmentFile=/home/ubuntu/tick_harvester/.env
+
+# Restart policy:
+#   on-failure  — restart if the script crashes (non-zero exit code)
+#   Do NOT use 'always' — that would hide auth errors (e.g. expired token)
+Restart=on-failure
+RestartSec=15
+
+# Give the process up to 30 s to flush its buffer on SIGTERM before SIGKILL
+TimeoutStopSec=30
+
+# Log stdout/stderr to journald (viewable via journalctl)
+StandardOutput=journal
+StandardError=journal
+
+# Append a syslog identifier so logs can be filtered easily:
+#   sudo journalctl -t tick_harvester
+SyslogIdentifier=tick_harvester
+
+# Resource limits for the t3.micro (1 GB RAM, 2 vCPU)
+# MemoryMax pins the process to 256 MB — well below safe limits
+MemoryMax=256M
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

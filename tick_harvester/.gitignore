@@ -1,0 +1,25 @@
+# ── SECURITY: never commit credentials ──────────────────────────────────────
+config.json
+
+# ── RUNTIME outputs ─────────────────────────────────────────────────────────
+tick_data/
+harvester.log
+
+# ── Python artefacts ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environment ──────────────────────────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+
+# ── IDE / OS junk ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

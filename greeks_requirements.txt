@@ -1,0 +1,14 @@
+# greeks_requirements.txt
+# =======================
+# Dependencies for options_greeks_calculator.py
+# Run:  pip install -r greeks_requirements.txt
+
+# Black-Scholes IV + Greeks (C extension — fast)
+py_vollib>=1.0.1
+
+# Columnar data processing (local desktop; no RAM restriction)
+pandas>=2.0.0
+
+# py_vollib transitive dependencies (usually auto-installed)
+numpy>=1.24.0
+scipy>=1.10.0

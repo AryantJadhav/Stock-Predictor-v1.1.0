@@ -1,0 +1,78 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  SECURITY — NEVER commit these
+# ════════════════════════════════════════════════════════════════════════════
+
+# EC2 private key files
+EC2 Key/
+*.pem
+*.ppk
+*.key
+
+# Sharekhan API credentials
+tick_harvester/config.json
+
+# Any .env files that might hold secrets
+.env
+.env.*
+!.env.example
+
+# ════════════════════════════════════════════════════════════════════════════
+#  RUNTIME OUTPUTS  (re-generated on every run — not source code)
+# ════════════════════════════════════════════════════════════════════════════
+
+# Live tick data written by the harvester
+tick_harvester/tick_data/
+
+# Enriched CSV output
+enriched_output/
+
+# Raw input CSVs placed locally for processing
+input_data/
+
+# Log files
+*.log
+harvester.log
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PYTHON ARTEFACTS
+# ════════════════════════════════════════════════════════════════════════════
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# ════════════════════════════════════════════════════════════════════════════
+#  VIRTUAL ENVIRONMENTS
+# ════════════════════════════════════════════════════════════════════════════
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# ════════════════════════════════════════════════════════════════════════════
+#  IDE / EDITOR NOISE
+# ════════════════════════════════════════════════════════════════════════════
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ════════════════════════════════════════════════════════════════════════════
+#  OS JUNK
+# ════════════════════════════════════════════════════════════════════════════
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
