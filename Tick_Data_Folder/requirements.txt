@@ -1,5 +1,18 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tick Harvester — Python dependencies
+#  Install:  venv/bin/pip install -r requirements.txt
+#
+#  All packages below are the ONLY external dependencies.
+#  No pandas, no SQLite, no heavy ML libraries — safe for EC2 t3.small (2 GB).
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Sharekhan official SDK
 shareconnect
 
 # WebSocket engine  (shareconnect depends on this; pin a stable version)
 websocket-client>=1.6.0,<2.0.0
+
+# Cryptography — required by SharekhanConnect.generate_session*()
+# Both libraries are used by the SDK internally for AES-GCM token encryption.
+pycryptodome>=3.18.0,<4.0.0
+cryptography>=41.0.0,<44.0.0

@@ -1,36 +1,60 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  tick_harvester.service
 #  systemd unit file for the Sharekhan Tick Harvester
+#  Target: AWS EC2 t3.small  (2 GB RAM, 2 vCPU)  —  Ubuntu 22.04 LTS
 #
-#  INSTALLATION (on the EC2 Ubuntu instance):
+# ── ONE-TIME EC2 SETUP ───────────────────────────────────────────────────────
 #
-#  1.  Copy this file to the systemd directory:
-#          sudo cp tick_harvester.service /etc/systemd/system/
+#  1.  Set the instance timezone to IST (do this once after launch):
+#          sudo timedatectl set-timezone Asia/Kolkata
+#          timedatectl    # verify: "Time zone: Asia/Kolkata (IST, +0530)"
 #
-#  2.  Reload systemd and enable the service:
+#  2.  Clone / upload the project:
+#          scp -r "Stock-Predictor-v1.1.0" ubuntu@<EC2-IP>:/home/ubuntu/
+#      Or clone from git:
+#          git clone <repo-url> /home/ubuntu/Stock-Predictor
+#
+#  3.  Create a Python virtualenv and install dependencies:
+#          cd /home/ubuntu/Stock-Predictor
+#          python3 -m venv venv
+#          venv/bin/pip install --upgrade pip
+#          venv/bin/pip install -r Tick_Data_Folder/requirements.txt
+#
+#  4.  Run auth_helper.py ONCE to generate the first access_token:
+#          cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+#          ../venv/bin/python auth_helper.py --request-token <YOUR_TOKEN>
+#
+#  5.  Install this service file:
+#          sudo cp /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_harvester.service \
+#                  /etc/systemd/system/
 #          sudo systemctl daemon-reload
 #          sudo systemctl enable tick_harvester
-#
-#  3.  Start the service:
 #          sudo systemctl start tick_harvester
 #
-#  4.  Check logs in real-time:
+#  6.  Verify it is running:
+#          sudo systemctl status tick_harvester
 #          sudo journalctl -u tick_harvester -f
-#          # or read the local log file:
-#          tail -f /home/ubuntu/tick_harvester/harvester.log
+#          tail -f /home/ubuntu/Stock-Predictor/Tick_Data_Folder/harvester.log
 #
-#  5.  Stop the service (triggers SIGTERM → graceful flush):
+#  7.  Stop gracefully (flushes CSV buffer before exit):
 #          sudo systemctl stop tick_harvester
 #
-#  DAILY ACCESS-TOKEN REFRESH  (Sharekhan tokens expire each day):
-#  Add this cron job to refresh the token before market open (08:45 IST):
+# ── DAILY ACCESS-TOKEN REFRESH (Sharekhan token expires at midnight IST) ─────
 #
-#      sudo crontab -u ubuntu -e
-#      # Append:
-#      15 3 * * 1-5  /home/ubuntu/tick_harvester/venv/bin/python \
-#                    /home/ubuntu/tick_harvester/auth_helper.py \
-#                    --request-token "PASTE_NEW_REQUEST_TOKEN_HERE" \
-#                    && sudo systemctl restart tick_harvester
+#  The TokenReminderThread emails you at 23:00 before each trading day.
+#  After you receive the email, log in at the Sharekhan URL, copy the
+#  RequestToken, then run on EC2 (or automate via cron):
+#
+#      cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+#      ../venv/bin/python auth_helper.py --request-token <REQUEST_TOKEN>
+#      sudo systemctl restart tick_harvester
+#
+#  Cron automation (runs at 08:45 IST every weekday — token must be
+#  pre-populated in config.json by that time):
+#
+#      crontab -e
+#      # Append (time is IST because TZ=Asia/Kolkata is already set):
+#      45 8 * * 1-5  sudo systemctl restart tick_harvester
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -38,48 +62,54 @@
 Description=Sharekhan Live Tick Harvester
 Documentation=https://github.com/Sharekhan-API/shareconnectpython
 
-# Start only after the network stack is fully up
-After=network-online.target nss-lookup.target
+# Wait for full network + NTP time-sync before starting.
+# time-sync.target ensures datetime.now() returns the correct IST time at boot.
+After=network-online.target nss-lookup.target time-sync.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 
-# Replace 'ubuntu' with whatever Linux user owns the project files
 User=ubuntu
 Group=ubuntu
 
-# Absolute path to the project directory on EC2
-WorkingDirectory=/home/ubuntu/tick_harvester
+# ── Paths ─────────────────────────────────────────────────────────────────────
+WorkingDirectory=/home/ubuntu/Stock-Predictor/Tick_Data_Folder
 
-# Use the venv Python which has shareconnect installed
-ExecStart=/home/ubuntu/tick_harvester/venv/bin/python \
-          /home/ubuntu/tick_harvester/tick_harvester.py
+ExecStart=/home/ubuntu/Stock-Predictor/venv/bin/python \
+          /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_harvester.py
 
-# Pass secrets as environment variables instead of writing them to config.json
-# (Optional — config.json works too)
-# EnvironmentFile=/home/ubuntu/tick_harvester/.env
+# ── Timezone ──────────────────────────────────────────────────────────────────
+# Force IST for all datetime.now() / date.today() calls inside the process.
+# This is the single most important EC2 setting — without it the timestamps
+# in the CSV files and holiday checks would be in UTC (off by 5 h 30 m).
+Environment=TZ=Asia/Kolkata
 
-# Restart policy:
-#   on-failure  — restart if the script crashes (non-zero exit code)
-#   Do NOT use 'always' — that would hide auth errors (e.g. expired token)
+# ── Restart policy ────────────────────────────────────────────────────────────
+# on-failure: restart if the process crashes (non-zero exit).
+# The holiday-sleep loop keeps the process alive overnight so systemd does
+# NOT need to restart it during weekends / holidays.
+# 'always' is intentionally avoided — it would mask expired-token errors.
 Restart=on-failure
 RestartSec=15
 
-# Give the process up to 30 s to flush its buffer on SIGTERM before SIGKILL
+# ── Graceful shutdown ─────────────────────────────────────────────────────────
+# SIGTERM triggers request_shutdown() → flushes the CSV buffer before exit.
+# Give the process up to 30 s to finish flushing before sending SIGKILL.
+KillSignal=SIGTERM
 TimeoutStopSec=30
 
-# Log stdout/stderr to journald (viewable via journalctl)
+# ── Logging ───────────────────────────────────────────────────────────────────
+# stdout/stderr → journald  (readable via journalctl)
+# The script also writes to harvester.log directly for convenience.
 StandardOutput=journal
 StandardError=journal
-
-# Append a syslog identifier so logs can be filtered easily:
-#   sudo journalctl -t tick_harvester
 SyslogIdentifier=tick_harvester
 
-# Resource limits for the t3.micro (1 GB RAM, 2 vCPU)
-# MemoryMax pins the process to 256 MB — well below safe limits
-MemoryMax=256M
+# ── Resource limits (t3.small: 2 GB RAM, 2 vCPU) ─────────────────────────────
+# 512 MB is generous for ~230 instruments with no pandas / SQLite.
+# Raise to 768M if you add many more option contracts.
+MemoryMax=512M
 CPUQuota=80%
 
 [Install]

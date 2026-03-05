@@ -1001,6 +1001,40 @@ def _is_trading_day(d: date) -> bool:
     return d not in NSE_HOLIDAYS
 
 
+def _next_trading_day(from_date: date) -> date:
+    """Return the first trading day strictly after `from_date`."""
+    candidate = from_date + timedelta(days=1)
+    while not _is_trading_day(candidate):
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def _sleep_until_next_trading_day() -> None:
+    """
+    Block (interruptibly) until 00:00:30 on the next trading day.
+
+    Called when the harvester boots on a holiday or weekend so the process
+    stays alive (systemd does not restart it) and wakes up automatically
+    on the next market day.
+    Sleeps in 60-second slices so a SIGINT/SIGTERM still exits promptly.
+    """
+    today      = date.today()
+    next_day   = _next_trading_day(today)
+    # Wake up 30 seconds after midnight of the next trading day
+    wake_dt    = datetime.combine(next_day, datetime.min.time()) + timedelta(seconds=30)
+    wait_secs  = max(0.0, (wake_dt - datetime.now()).total_seconds())
+
+    log.info(
+        "Today (%s) is not a trading day.  Sleeping until %s (~%.1f hours).",
+        today.isoformat(), wake_dt.strftime("%Y-%m-%d %H:%M:%S"), wait_secs / 3600,
+    )
+    deadline = time.monotonic() + wait_secs
+    while time.monotonic() < deadline:
+        # Sleep in 60-second slices so Ctrl+C / SIGTERM is responsive
+        remaining = deadline - time.monotonic()
+        time.sleep(min(60.0, remaining))
+
+
 def _is_token_fresh() -> bool:
     """
     Return True if the access_token in config.json was updated today.
@@ -1413,9 +1447,28 @@ class TickHarvester:
 #  ENTRY POINT
 # ═════════════════════════════════════════════════════════════════════════════
 def main() -> None:
+    # ── 0. Holiday / weekend guard ────────────────────────────────────────
+    # If the process starts (or loops back here after a holiday sleep) on a
+    # non-trading day, sleep until 00:00:30 of the next trading day and then
+    # re-enter the boot sequence.  The outer while-loop means the process
+    # never exits on its own — systemd does not need to restart it.
+    while not _is_trading_day(date.today()):
+        _sleep_until_next_trading_day()
+        # Re-check after waking (handles consecutive holidays, e.g. Thu holiday + Fri holiday)
+
     log.info("=" * 60)
     log.info("  Sharekhan Tick Harvester — starting up")
     log.info("=" * 60)
+
+    # Log the effective timezone so EC2 misconfigurations are caught immediately.
+    # If you see UTC here instead of IST, set TZ=Asia/Kolkata in the systemd
+    # service file OR run: sudo timedatectl set-timezone Asia/Kolkata
+    import time as _time
+    log.info(
+        "Timezone: %s  |  Local time: %s",
+        _time.tzname[_time.daylight],
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
 
     # ── 1. Load credentials ───────────────────────────────────────────────
     try:
