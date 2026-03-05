@@ -1,0 +1,28 @@
+# NSE Trading Holidays
+# ─────────────────────────────────────────────────────────────────────────────
+# Format  :  DD-MM-YYYY   Description
+# Rules   :  • One holiday per line
+#            • Lines starting with # are comments (ignored)
+#            • Blank lines are ignored
+#            • Date MUST be in DD-MM-YYYY format
+# ─────────────────────────────────────────────────────────────────────────────
+# To add / remove a holiday just edit this file — tick_harvester.py reads it
+# automatically on every startup, no code change needed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── 2026 ─────────────────────────────────────────────────────────────────────
+26-01-2026   Republic Day
+03-03-2026   Holi
+26-03-2026   Shri Ram Navami
+31-03-2026   Shri Mahavir Jayanti
+03-04-2026   Good Friday
+14-04-2026   Dr. Babasaheb Ambedkar Jayanti
+01-05-2026   Maharashtra Day
+28-05-2026   Bakri Id
+26-07-2026   Muharram
+14-09-2026   Ganesh Chaturthi
+02-10-2026   Mahatma Gandhi Jayanti
+20-10-2026   Dussehra
+10-11-2026   Diwali - Balipratipada
+24-11-2026   Gurunanak Jayanti
+25-12-2026   Christmas

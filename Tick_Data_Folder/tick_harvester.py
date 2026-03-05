@@ -86,6 +86,56 @@ RECONNECT_DELAY_MAX = 60   # cap the back-off at 60 s
 # N seconds so we don't lose data during quiet market periods
 PERIODIC_FLUSH_INTERVAL = 60  # seconds
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  NSE TRADING HOLIDAYS  ← file-driven, no code change needed
+#  Edit  :  Tick_Data_Folder/nse_holidays.txt  (one DD-MM-YYYY date per line)
+#  Loaded:  once at startup by _load_nse_holidays()
+# ─────────────────────────────────────────────────────────────────────────────
+NSE_HOLIDAYS_FILE = _BASE_DIR / "nse_holidays.txt"
+
+
+def _load_nse_holidays() -> frozenset:
+    """
+    Parse nse_holidays.txt and return a frozenset of date objects.
+
+    File format (same as the txt file you edit):
+      DD-MM-YYYY   Description    <- date + optional description
+      # comment line             <- ignored
+      <blank line>               <- ignored
+
+    If the file is missing or unreadable a warning is logged and an
+    empty frozenset is returned so the harvester still starts.
+    """
+    holidays: set[date] = set()
+    try:
+        with open(NSE_HOLIDAYS_FILE, "r", encoding="utf-8") as fh:
+            for lineno, raw in enumerate(fh, 1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                date_part = line.split()[0]   # first token is DD-MM-YYYY
+                try:
+                    holidays.add(datetime.strptime(date_part, "%d-%m-%Y").date())
+                except ValueError:
+                    log.warning(
+                        "nse_holidays.txt line %d: cannot parse date %r — skipped.",
+                        lineno, date_part,
+                    )
+    except FileNotFoundError:
+        log.warning(
+            "nse_holidays.txt not found at %s — no holidays loaded.",
+            NSE_HOLIDAYS_FILE,
+        )
+    except OSError as exc:
+        log.warning("Could not read nse_holidays.txt: %s", exc)
+
+    log.info("Loaded %d NSE holiday(s) from nse_holidays.txt.", len(holidays))
+    return frozenset(holidays)
+
+
+# Loaded once at import/startup; used by _is_trading_day()
+NSE_HOLIDAYS: frozenset = _load_nse_holidays()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  INSTRUMENT CODES  (populated dynamically at boot by fetch_dynamic_scrip_codes)
@@ -944,6 +994,13 @@ class PeriodicFlusher(threading.Thread):
 # ═════════════════════════════════════════════════════════════════════════════
 #  TOKEN REMINDER THREAD
 # ═════════════════════════════════════════════════════════════════════════════
+def _is_trading_day(d: date) -> bool:
+    """Return True if `d` is an NSE trading day (not a weekend or listed holiday)."""
+    if d.weekday() in (5, 6):          # Saturday=5, Sunday=6
+        return False
+    return d not in NSE_HOLIDAYS
+
+
 def _is_token_fresh() -> bool:
     """
     Return True if the access_token in config.json was updated today.
@@ -1039,18 +1096,27 @@ def _send_token_reminder(cfg: dict) -> None:
 class TokenReminderThread(threading.Thread):
     """
     Daemon background thread that emails a token-refresh reminder at 23:00
-    (11 PM local time) on Sunday through Thursday.
+    (11 PM local time) on Sunday through Thursday, *skipping* evenings that
+    precede an NSE market holiday.
 
     Schedule
     --------
-    Indian markets are open Monday–Friday.  Reminders fire the evening before
-    each trading day so the token is refreshed overnight:
+    Indian markets are open Monday–Friday (excluding holidays).  Reminders
+    fire the evening before each trading day so the token is refreshed
+    overnight:
       Sunday    23:00  →  refresh for Monday
       Monday    23:00  →  refresh for Tuesday
       Tuesday   23:00  →  refresh for Wednesday
       Wednesday 23:00  →  refresh for Thursday
       Thursday  23:00  →  refresh for Friday   ← covers Friday trading
     Saturday: no reminder (no trading day follows on Sunday).
+
+    Holiday awareness
+    -----------------
+    If the *next* calendar day is an NSE holiday (e.g. Monday is Holi),
+    the Sunday-night reminder is automatically skipped — no token refresh
+    is needed until the day before the next actual trading day.
+    The holiday list is read from nse_holidays.txt (NSE_HOLIDAYS).
 
     Repetition
     ----------
@@ -1086,13 +1152,22 @@ class TokenReminderThread(threading.Thread):
         today_trigger = now.replace(hour=self.REMINDER_HOUR, minute=0,
                                     second=0, microsecond=0)
 
-        # Possible next trigger times: today 23:00 (if in future) + up to 7 days ahead
-        for delta_days in range(8):
+        # Possible next trigger times: today 23:00 (if in future) + up to 14 days ahead
+        for delta_days in range(15):
             candidate = today_trigger + timedelta(days=delta_days)
             if candidate <= now:
                 continue
-            if candidate.weekday() in self.REMINDER_WEEKDAYS:
-                return (candidate - now).total_seconds()
+            if candidate.weekday() not in self.REMINDER_WEEKDAYS:
+                continue
+            # The reminder covers the *next* calendar day — skip if it's not a trading day
+            next_day = candidate.date() + timedelta(days=1)
+            if not _is_trading_day(next_day):
+                log.debug(
+                    "TokenReminderThread: skipping %s 23:00 reminder — %s is a holiday/weekend.",
+                    candidate.strftime("%A"), next_day.isoformat(),
+                )
+                continue
+            return (candidate - now).total_seconds()
 
         # Fallback: check again in 24 hours (should never reach here)
         return 86400.0
