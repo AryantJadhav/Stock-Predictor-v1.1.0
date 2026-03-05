@@ -1,0 +1,27 @@
+Step 2 — Update Token on EC2
+Open PowerShell and run:
+ssh -i "D:\Coding\Stock Predictor\Stock-Predictor-v1.1.0\EC2 Key\Stock-Prediction-v1.1.0.pem" ubuntu@13.127.100.143
+
+
+Once inside the EC2 terminal:
+cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+../venv/bin/python auth_helper.py
+
+
+Step 3 — Restart the Harvester
+Still on EC2:
+sudo systemctl restart tick_harvester
+sudo journalctl -u tick_harvester -f
+
+
+You should see:
+INFO  Dynamic scrip resolution complete → 227 instrument code(s) ready.
+INFO  WebSocket connected. Subscribing to 227 instrument(s)…
+INFO  Depth-feed subscription sent for 227 instrument(s).
+
+Press Ctrl+C to exit the log view. The harvester keeps running in the background.
+
+
+Step 4 — Verify Data Is Flowing
+
+ls /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_data/stock_price_data/

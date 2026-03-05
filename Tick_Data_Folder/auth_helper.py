@@ -31,9 +31,11 @@ Cron example (every weekday at 09:00 IST = 03:30 UTC):
 
 import argparse
 import json
+import re
 import sys
 import webbrowser
 from pathlib import Path
+from urllib.parse import unquote
 
 try:
     from SharekhanApi.sharekhanConnect import SharekhanConnect  # type: ignore
@@ -114,8 +116,9 @@ def main() -> None:
     print(f"\n  {login_url}\n")
     print(
         "  Log in with your Sharekhan credentials. After a successful login you\n"
-        "  will be redirected to a URL containing:  ?RequestToken=XXXXX\n"
-        "  Copy that RequestToken value.\n"
+        "  will be redirected to a URL like:\n"
+        "    http://127.0.0.1/?RequestToken=XXXXXXXX&state=12345\n"
+        "  You can paste either the FULL URL or just the token value.\n"
     )
 
     try:
@@ -140,6 +143,21 @@ def main() -> None:
     if not request_token:
         sys.exit("ERROR: RequestToken cannot be empty.")
 
+    # Handle full URL paste — extract token using regex to avoid parse_qs
+    # converting '+' → ' ' which corrupts the base64-encoded token.
+    if request_token.startswith("http"):
+        match = re.search(r'[?&][Rr]equest[_]?[Tt]oken=([^&]+)', request_token)
+        if not match:
+            sys.exit("ERROR: Could not find RequestToken in the pasted URL.")
+        # unquote() decodes %2B→+ and %3D→= but leaves raw '+' untouched
+        request_token = unquote(match.group(1))
+        print("  Extracted RequestToken from URL.")
+    else:
+        # Only decode %xx sequences; do NOT call unquote_plus — it turns + into space
+        request_token = unquote(request_token)
+
+    print(f"  Token length  : {len(request_token)} chars")
+
     # ── Step 3: Exchange for access_token ─────────────────────────────────────
     print(f"\n{DIVIDER}")
     print("  STEP 3 — Generating access_token …")
@@ -150,17 +168,38 @@ def main() -> None:
             request_token,
             cfg["secret_key"],
         )
-        access_token = sk.get_access_token(cfg["api_key"], session, _OAUTH_STATE)
     except Exception as exc:
         sys.exit(
-            f"\nERROR: Could not obtain access_token — {exc}\n"
-            "  Check that your api_key / secret_key are correct and that the\n"
-            "  RequestToken is fresh (they are single-use and expire quickly)."
+            f"\nERROR: generate_session failed — {exc}\n"
+            "  Check that your secret_key is correct and the RequestToken is fresh."
         )
 
-    if not access_token:
+    # Validate session — SDK may return an error dict instead of raising
+    if not session or (isinstance(session, dict) and session.get("status") == "fail"):
         sys.exit(
-            "\nERROR: Received an empty access_token.\n"
+            f"\nERROR: Session generation failed.\n"
+            f"  Response: {session}\n"
+            "  The RequestToken may have already been used or expired. Restart from Step 1."
+        )
+
+    try:
+        access_token = sk.get_access_token(cfg["api_key"], session, _OAUTH_STATE)
+    except Exception as exc:
+        sys.exit(f"\nERROR: get_access_token failed — {exc}")
+
+    # SDK may return the full response dict instead of just the token string.
+    # Extract the token from data.token if needed.
+    if isinstance(access_token, dict):
+        access_token = (
+            access_token.get("data", {}).get("token")
+            or access_token.get("token")
+            or access_token.get("access_token")
+        )
+
+    # Validate — must be a non-empty string
+    if not access_token or not isinstance(access_token, str) or len(access_token) < 10:
+        sys.exit(
+            f"\nERROR: Received invalid access_token: {access_token!r}\n"
             "  The RequestToken may have already been used or expired.\n"
             "  Please restart from Step 1."
         )

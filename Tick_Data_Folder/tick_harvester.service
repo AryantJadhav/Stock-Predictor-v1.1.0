@@ -107,9 +107,7 @@ StandardError=journal
 SyslogIdentifier=tick_harvester
 
 # ── Resource limits (t3.small: 2 GB RAM, 2 vCPU) ─────────────────────────────
-# 512 MB is generous for ~230 instruments with no pandas / SQLite.
-# Raise to 768M if you add many more option contracts.
-MemoryMax=512M
+# No memory cap — process is free to use available RAM.
 CPUQuota=80%
 
 [Install]

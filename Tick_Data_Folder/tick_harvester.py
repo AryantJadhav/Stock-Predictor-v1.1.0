@@ -52,8 +52,10 @@ from SharekhanApi.sharekhanWebsocket import SharekhanWebSocket  # type: ignore  
 # Paths (relative to this script's directory so the EC2 user doesn't need to
 # care about the current working directory when running the script)
 _BASE_DIR   = Path(__file__).parent
-CONFIG_FILE = _BASE_DIR / "config.json"    # your API credentials
-DATA_DIR    = _BASE_DIR / "tick_data"      # all daily CSV files land here
+CONFIG_FILE    = _BASE_DIR / "config.json"         # your API credentials
+DATA_DIR       = _BASE_DIR / "tick_data"            # root output directory
+STOCK_DATA_DIR = DATA_DIR / "stock_price_data"      # NC / BC spot-price CSVs
+FO_DATA_DIR    = DATA_DIR / "fo_data"               # NF options / futures CSVs
 LOG_FILE        = _BASE_DIR / "harvester.log"    # rotated by the OS or manually
 FO_SYMBOLS_FILE           = _BASE_DIR / "fo_symbols.txt"            # spot/equity symbols
 FO_OPTIONS_UNDERLYINGS_FILE = _BASE_DIR / "fo_options_underlyings.txt"  # option chain underlyings
@@ -117,19 +119,16 @@ def _load_nse_holidays() -> frozenset:
                 try:
                     holidays.add(datetime.strptime(date_part, "%d-%m-%Y").date())
                 except ValueError:
-                    log.warning(
-                        "nse_holidays.txt line %d: cannot parse date %r — skipped.",
-                        lineno, date_part,
+                    print(
+                        f"WARNING  nse_holidays.txt line {lineno}: "
+                        f"cannot parse date {date_part!r} — skipped."
                     )
     except FileNotFoundError:
-        log.warning(
-            "nse_holidays.txt not found at %s — no holidays loaded.",
-            NSE_HOLIDAYS_FILE,
-        )
+        print(f"WARNING  nse_holidays.txt not found at {NSE_HOLIDAYS_FILE} — no holidays loaded.")
     except OSError as exc:
-        log.warning("Could not read nse_holidays.txt: %s", exc)
+        print(f"WARNING  Could not read nse_holidays.txt: {exc}")
 
-    log.info("Loaded %d NSE holiday(s) from nse_holidays.txt.", len(holidays))
+    print(f"INFO     Loaded {len(holidays)} NSE holiday(s) from nse_holidays.txt.")
     return frozenset(holidays)
 
 
@@ -736,90 +735,97 @@ class CsvBatchWriter:
     def __init__(self, data_dir: Path, batch_size: int = BATCH_SIZE) -> None:
         self._dir        = data_dir
         self._batch_size = batch_size
-        self._buffer: list[dict]  = []
+        self._buffer: dict[str, list[dict]] = {}  # symbol → [ticks]
         self._lock         = threading.Lock()
         self._current_date = date.today()
         self._dir.mkdir(parents=True, exist_ok=True)
         log.info("CsvBatchWriter ready — writing to %s (batch=%d)", self._dir, batch_size)
 
     # ──────────────────────────────────────────────────────────────────────
-    def _csv_path(self) -> Path:
+    def _csv_path(self, symbol: str) -> Path:
         """
-        Return the path for today's CSV file.
-        Detects a date change (midnight rollover) and logs it.
+        Return the path for a symbol's CSV file, inside a DD-MM-YYYY subfolder.
+        Detects a date change (midnight rollover), creates the new folder, and logs it.
+        Structure: <data_dir>/<DD-MM-YYYY>/<SYMBOL>.csv
         """
         today = date.today()
         if today != self._current_date:
             log.info(
-                "Midnight rollover: switching from ticks_%s.csv → ticks_%s.csv",
-                self._current_date.isoformat(),
-                today.isoformat(),
+                "Midnight rollover: switching from %s → %s",
+                self._current_date.strftime("%d-%m-%Y"),
+                today.strftime("%d-%m-%Y"),
             )
             self._current_date = today
-        return self._dir / f"ticks_{self._current_date.isoformat()}.csv"
+        day_dir = self._dir / self._current_date.strftime("%d-%m-%Y")
+        day_dir.mkdir(parents=True, exist_ok=True)
+        return day_dir / f"{symbol}.csv"
 
     # ──────────────────────────────────────────────────────────────────────
-    def _flush_locked(self) -> None:
+    def _flush_symbol_locked(self, symbol: str) -> None:
         """
-        Write the buffer to disk and clear it.
+        Write one symbol's buffer to its CSV file and clear it.
         MUST be called while self._lock is already held.
         """
-        if not self._buffer:
-            return  # nothing to do
-
-        target = self._csv_path()
+        ticks = self._buffer.get(symbol)
+        if not ticks:
+            return
+        target = self._csv_path(symbol)
         file_existed = target.exists()
-        n = len(self._buffer)
-
+        n = len(ticks)
         try:
             with open(target, "a", newline="", encoding="utf-8") as fh:
                 writer = csv.DictWriter(
                     fh,
                     fieldnames=CSV_HEADERS,
-                    extrasaction="ignore",  # ignore unknown keys from API
+                    extrasaction="ignore",
                 )
                 if not file_existed:
-                    # Write the header row only for brand-new files
                     writer.writeheader()
-                writer.writerows(self._buffer)
-
-            # ← This is the critical line: free RAM immediately after disk write
-            self._buffer.clear()
-
+                writer.writerows(ticks)
+            ticks.clear()
             log.debug("Flushed %d ticks → %s", n, target.name)
-
         except OSError as exc:
-            # Do NOT clear the buffer on failure — retry on the next flush
             log.error("Disk write failed (%s). Buffer retained (%d items).", exc, n)
+
+    # ──────────────────────────────────────────────────────────────────────
+    def _flush_locked(self) -> None:
+        """
+        Flush all symbols' buffers to disk.
+        MUST be called while self._lock is already held.
+        """
+        for symbol in list(self._buffer):
+            self._flush_symbol_locked(symbol)
 
     # ──────────────────────────────────────────────────────────────────────
     def add(self, tick: dict) -> None:
         """
-        Add one tick to the in-memory buffer.
-        Triggers an automatic flush when buffer reaches batch_size.
+        Add one tick to the in-memory buffer, keyed by symbol.
+        Triggers an automatic flush for that symbol when its buffer reaches batch_size.
         """
+        symbol = tick.get("Symbol") or "UNKNOWN"
         with self._lock:
-            self._buffer.append(tick)
-            if len(self._buffer) >= self._batch_size:
-                self._flush_locked()
+            buf = self._buffer.setdefault(symbol, [])
+            buf.append(tick)
+            if len(buf) >= self._batch_size:
+                self._flush_symbol_locked(symbol)
 
     # ──────────────────────────────────────────────────────────────────────
     def flush(self) -> None:
         """
-        Force-flush the buffer to disk regardless of its current size.
+        Force-flush all symbol buffers to disk regardless of their current size.
         Called by the periodic safety timer and on shutdown.
         """
         with self._lock:
-            count = len(self._buffer)
+            count = sum(len(v) for v in self._buffer.values())
             self._flush_locked()
             if count:
                 log.info("Safety flush: wrote %d buffered ticks to disk.", count)
 
     # ──────────────────────────────────────────────────────────────────────
     def __len__(self) -> int:
-        """Return number of ticks currently held in RAM."""
+        """Return total number of ticks currently held in RAM across all symbols."""
         with self._lock:
-            return len(self._buffer)
+            return sum(len(v) for v in self._buffer.values())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -852,8 +858,8 @@ def parse_tick(raw_message: object) -> dict | None:
     harvester keeps running without crashing.
     """
     try:
-        # Heartbeat reply from the server — not a data tick
-        if raw_message is None or raw_message == "pong":
+        # Heartbeat / keepalive frames — not data ticks, drop silently
+        if raw_message is None or raw_message in ("pong", "heartbeat"):
             return None
 
         # The SDK may deliver the payload as a JSON string or a pre-parsed dict
@@ -938,6 +944,10 @@ def parse_tick(raw_message: object) -> dict | None:
             "OI": data.get("oi") or data.get("openInterest") or data.get("OpenInterest") or None,
         }
 
+        # Drop empty/useless ticks (e.g. SDK connection-ack messages with no data)
+        if tick["Symbol"] is None and tick["LTP"] is None:
+            return None
+
         return tick
 
     except (json.JSONDecodeError, AttributeError, TypeError) as exc:
@@ -975,9 +985,9 @@ class PeriodicFlusher(threading.Thread):
     Without this, a nearly-full buffer could sit in RAM for a long time.
     """
 
-    def __init__(self, writer: CsvBatchWriter, interval: int = PERIODIC_FLUSH_INTERVAL) -> None:
+    def __init__(self, writers: list[CsvBatchWriter], interval: int = PERIODIC_FLUSH_INTERVAL) -> None:
         super().__init__(name="periodic-flusher", daemon=True)
-        self._writer   = writer
+        self._writers  = writers
         self._interval = interval
         self._stop_evt = threading.Event()
 
@@ -987,7 +997,8 @@ class PeriodicFlusher(threading.Thread):
     def run(self) -> None:
         log.info("PeriodicFlusher started (interval=%ds).", self._interval)
         while not self._stop_evt.wait(timeout=self._interval):
-            self._writer.flush()
+            for w in self._writers:
+                w.flush()
         log.info("PeriodicFlusher stopped.")
 
 
@@ -1281,11 +1292,13 @@ class TickHarvester:
     def __init__(
         self,
         access_token:     str,
-        writer:           CsvBatchWriter,
+        stock_writer:     CsvBatchWriter,
+        fo_writer:        CsvBatchWriter,
         instrument_codes: list[str],
     ) -> None:
         self._access_token     = access_token
-        self._writer           = writer
+        self._stock_writer     = stock_writer   # NC / BC spot-price ticks
+        self._fo_writer        = fo_writer      # NF options / futures ticks
         self._instrument_codes = instrument_codes   # resolved at boot
         self._sws: SharekhanWebSocket | None = None
         self._shutdown         = threading.Event()
@@ -1298,7 +1311,8 @@ class TickHarvester:
         Gracefully flushes RAM buffer before the process dies.
         """
         sig_name = signal.Signals(signum).name if signum else "programmatic"
-        log.info("Shutdown requested (%s). Flushing %d buffered ticks…", sig_name, len(self._writer))
+        buffered = len(self._stock_writer) + len(self._fo_writer)
+        log.info("Shutdown requested (%s). Flushing %d buffered ticks…", sig_name, buffered)
         self._shutdown.set()
 
         # Tell the running WebSocket to close cleanly
@@ -1309,7 +1323,8 @@ class TickHarvester:
                 log.debug("close_connection() raised (harmless): %s", exc)
 
         # Flush whatever is left in RAM to disk
-        self._writer.flush()
+        self._stock_writer.flush()
+        self._fo_writer.flush()
         log.info("Buffer flushed. Shutting down.")
 
     # ── WebSocket callbacks ──────────────────────────────────────────────
@@ -1359,7 +1374,10 @@ class TickHarvester:
         """
         tick = parse_tick(message)
         if tick is not None:
-            self._writer.add(tick)
+            if tick.get("Exchange") == EXCHANGE_NSE_FO:
+                self._fo_writer.add(tick)
+            else:
+                self._stock_writer.add(tick)
 
     def _on_error(self, wsapp: object, error: object) -> None:
         """Logs WebSocket-level errors without crashing the process."""
@@ -1380,8 +1398,8 @@ class TickHarvester:
         is called or the process is killed.
         """
         log.info(
-            "Tick harvester starting. Instruments=%d  Batch=%d  DataDir=%s",
-            len(self._instrument_codes), BATCH_SIZE, DATA_DIR,
+            "Tick harvester starting. Instruments=%d  Batch=%d  StockDir=%s  FoDir=%s",
+            len(self._instrument_codes), BATCH_SIZE, STOCK_DATA_DIR, FO_DATA_DIR,
         )
 
         attempt = 0
@@ -1523,13 +1541,15 @@ def main() -> None:
         " …" if len(instrument_codes) > 10 else "",
     )
 
-    # ── 4. Initialise the CSV writer ──────────────────────────────────────
-    writer = CsvBatchWriter(data_dir=DATA_DIR, batch_size=BATCH_SIZE)
+    # ── 4. Initialise the CSV writers (one per data category) ───────────
+    stock_writer = CsvBatchWriter(data_dir=STOCK_DATA_DIR, batch_size=BATCH_SIZE)
+    fo_writer    = CsvBatchWriter(data_dir=FO_DATA_DIR,    batch_size=BATCH_SIZE)
 
     # ── 5. Initialise the harvester ───────────────────────────────────────
     harvester = TickHarvester(
         access_token=cfg["access_token"],
-        writer=writer,
+        stock_writer=stock_writer,
+        fo_writer=fo_writer,
         instrument_codes=instrument_codes,
     )
 
@@ -1541,7 +1561,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, harvester.request_shutdown)
 
     # ── 7. Start the periodic safety flusher (daemon thread) ──────────────
-    flusher = PeriodicFlusher(writer=writer, interval=PERIODIC_FLUSH_INTERVAL)
+    flusher = PeriodicFlusher(writers=[stock_writer, fo_writer], interval=PERIODIC_FLUSH_INTERVAL)
     flusher.start()
 
     # ── 8. Start the token reminder thread (daemon thread) ────────────────
