@@ -1,0 +1,42 @@
+# fo_options_underlyings.txt
+# ==========================
+# Underlyings for which the FULL OPTIONS CHAIN will be subscribed via the
+# NSE F&O segment (exchange = NF).
+#
+# Rules:
+#   • One underlying per line — must match the TradingSymbol prefix in the
+#     Sharekhan NF master (e.g. "NIFTY" matches NIFTY27MAR2524000CE).
+#   • Case-insensitive. Blank lines and lines starting with '#' are ignored.
+#   • Only contracts expiring within OPTIONS_EXPIRY_LOOKAHEAD_DAYS (default 60)
+#     are subscribed.  Change that constant in tick_harvester.py if needed.
+#
+# RAM / bandwidth warning
+# -----------------------
+# Each underlying generates hundreds of option ticks per second during market
+# hours. On a 2 GB EC2:
+#   • Index options (NIFTY, BANKNIFTY, SENSEX) — high liquidity, high volume.
+#     Start with these; they produce the most useful Greeks data.
+#   • Adding individual stock options multiplies the stream many times over.
+#     Add sparingly or upgrade your EC2 instance first.
+#
+# The spot prices for all 226 equities are already collected via fo_symbols.txt
+# (exchange=NC). You only need to add a symbol here if you also want its
+# options chain tick data.
+# ────────────────────────────────────────────────────────────────────────────
+
+# ── Index options (high volume — recommended starting point) ─────────────────
+NIFTY
+BANKNIFTY
+SENSEX
+
+# ── Individual stock options (add as needed — monitor RAM usage) ─────────────
+# RELIANCE
+# HDFCBANK
+# ICICIBANK
+# INFY
+# TCS
+# SBIN
+# AXISBANK
+# KOTAKBANK
+# BAJFINANCE
+# TATAMOTORS
