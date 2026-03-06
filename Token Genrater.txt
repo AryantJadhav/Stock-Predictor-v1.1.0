@@ -25,3 +25,8 @@ Press Ctrl+C to exit the log view. The harvester keeps running in the background
 Step 4 — Verify Data Is Flowing
 
 ls /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_data/stock_price_data/
+
+
+Stock-Predictor/Tick_Data_Folder/tick_data/fo_data/06-03-2026
+
+

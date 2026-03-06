@@ -64,6 +64,7 @@ except ImportError:
 
 try:
     from py_vollib.black_scholes.implied_volatility import implied_volatility as _bs_iv
+    from py_vollib.black_scholes import black_scholes as _bs_price
     from py_vollib.black_scholes.greeks.analytical import (
         delta as _bs_delta,
         gamma as _bs_gamma,
@@ -139,6 +140,10 @@ GREEKS_COLS = [
     "theta_daily",        # time decay per calendar day (py_vollib normalised)
     "vega_1pct",          # price change per 1% rise in IV (py_vollib normalised)
     "rho_1pct",           # price change per 1% rise in r (py_vollib normalised)
+    "theoretical_price",  # Black-Scholes fair value (using solved IV)
+    "intrinsic_value",    # max(0, S-K) for calls / max(0, K-S) for puts
+    "time_value",         # option_price_used - intrinsic_value
+    "prob_itm",           # abs(delta) * 100  (approximate probability ITM, %)
     "calc_status",        # OK | IV_FAIL | NO_UNDERLYING | EXPIRED | PARSE_FAIL
 ]
 
@@ -412,6 +417,43 @@ def lookup_underlying_price(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  BLACK-SCHOLES THEORETICAL PRICE
+# ═════════════════════════════════════════════════════════════════════════════
+
+def calc_theoretical_price(
+    S:    float,
+    K:    float,
+    T:    float,
+    r:    float,
+    iv:   float,
+    flag: str,
+) -> Optional[float]:
+    """
+    Calculate the Black-Scholes fair / theoretical price of an option.
+
+    Uses py_vollib.black_scholes.black_scholes(flag, S, K, t, r, sigma).
+
+    Parameters
+    ----------
+    S, K, T, r, iv : standard BS inputs  (iv as decimal e.g. 0.18)
+    flag           : "c" or "p"
+
+    Returns
+    -------
+    Theoretical option price as float, or None on any error.
+    """
+    if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+        return None
+    try:
+        price = _bs_price(flag, S, K, T, r, iv)
+        if price is None or math.isnan(price) or math.isinf(price) or price < 0:
+            return None
+        return float(price)
+    except Exception:
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  BLACK-SCHOLES IV SOLVER
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -677,6 +719,17 @@ def enrich_row(
     empty["theta_daily"] = _fmt(greeks["theta_daily"], 4)
     empty["vega_1pct"]   = _fmt(greeks["vega_1pct"],   4)
     empty["rho_1pct"]    = _fmt(greeks["rho_1pct"],    4)
+
+    # ── 8. Theoretical Price, Time Value, Prob ITM ────────────────────────
+    theo = calc_theoretical_price(S=spot, K=strike, T=tte_years, r=risk_free, iv=iv, flag=flag)
+    empty["theoretical_price"] = _fmt(theo, 4)
+
+    intrinsic = max(0.0, (spot - strike) if flag == "c" else (strike - spot))
+    empty["intrinsic_value"]   = _fmt(intrinsic, 4)
+    empty["time_value"]        = _fmt(opt_price - intrinsic, 4)
+
+    delta_val = greeks["delta"]
+    empty["prob_itm"] = _fmt(abs(delta_val) * 100.0, 2) if delta_val is not None else None
 
     empty["calc_status"] = "OK"
     return empty
