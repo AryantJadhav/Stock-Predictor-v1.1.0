@@ -811,6 +811,10 @@ def fetch_fo_option_codes(
         u: [] for u in target_underlyings
     }
     expiry_sets: dict[str, set[date]] = {u: set() for u in target_underlyings}
+    # Futures candidates: (expiry_dt, code_str, exchange) — no strike for FUT
+    fut_candidates: dict[str, list[tuple[date, str, str]]] = {
+        u: [] for u in target_underlyings
+    }
 
     def _scan_master(exchange: str, universe: set[str]) -> None:
         """Fetch master for *exchange*, scan rows, populate candidates/expiry_sets."""
@@ -835,7 +839,7 @@ def fetch_fo_option_codes(
             opt_type = str(
                 _get_field(record, "optionType", "OptionType", "option_type") or ""
             ).strip().upper()
-            if opt_type not in ("CE", "PE"):
+            if opt_type not in ("CE", "PE", "FUT"):
                 continue
 
             base_raw = _get_field(
@@ -858,6 +862,19 @@ def fetch_fo_option_codes(
             expiry_dt = _parse_expiry_date(str(expiry_raw))
             if expiry_dt is None or expiry_dt < today:
                 continue
+
+            if opt_type == "FUT":
+                # Futures always have strike=0 — skip strike validation and
+                # store in the separate fut_candidates dict.
+                code = _get_field(
+                    record,
+                    "scripCode", "ScripCode", "scripcode", "SCRIPCODE",
+                    "Code", "code", "scripId", "ScripId",
+                )
+                if not code:
+                    continue
+                fut_candidates[base].append((expiry_dt, str(code), exchange))
+                continue  # do not add to options candidates
 
             try:
                 strike = float(record.get("strike") or record.get("Strike") or 0)
@@ -941,11 +958,38 @@ def fetch_fo_option_codes(
                 expiry_labels, expiry_rule, n_matched,
             )
 
+    n_options = len(instrument_codes)
     log.info(
         "  F&O options total: %d contract(s)  "
         "[smart expiry + ±%.0f%% strike bracket]",
-        len(instrument_codes),
+        n_options,
         STRIKE_FILTER_PCT * 100,
+    )
+
+    # ── Pass 3: add all available futures for each underlying ─────────────
+    for und in sorted(target_underlyings):
+        und_futures = fut_candidates[und]
+        if not und_futures:
+            continue
+        n_und_before = len(instrument_codes)
+        for (expiry_dt, code, exchange) in und_futures:
+            exp_compact = expiry_dt.strftime("%d%b%y").upper()
+            sym = f"{und}{exp_compact}FUT"
+            instrument_codes.append(f"{exchange}{code}")
+            CODE_TO_SYMBOL[f"{exchange}{code}"] = sym
+        n_und_added = len(instrument_codes) - n_und_before
+        expiry_labels = ", ".join(
+            sorted({e.isoformat() for (e, _, _) in und_futures})
+        )
+        log.info(
+            "  %-12s futures  expiries=[%s]  contracts=%d",
+            und, expiry_labels, n_und_added,
+        )
+
+    log.info(
+        "  Futures total: %d  |  F&O grand total: %d contract(s)",
+        len(instrument_codes) - n_options,
+        len(instrument_codes),
     )
     return instrument_codes
 
@@ -1592,7 +1636,7 @@ class TickHarvester:
         ticks = parse_tick(message)
         if ticks:
             for tick in ticks:
-                if tick.get("Exchange") == EXCHANGE_NSE_FO:
+                if tick.get("Exchange") in (EXCHANGE_NSE_FO, EXCHANGE_BSE_FO):
                     self._fo_writer.add(tick)
                 else:
                     self._stock_writer.add(tick)
