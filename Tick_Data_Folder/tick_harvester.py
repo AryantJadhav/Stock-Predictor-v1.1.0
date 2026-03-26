@@ -59,6 +59,7 @@ STOCK_DATA_DIR = DATA_DIR / "stock_price_data"      # NC / BC spot-price CSVs
 FO_DATA_DIR    = DATA_DIR / "fo_data"               # NF options / futures CSVs
 LOG_FILE        = _BASE_DIR / "harvester.log"    # rotated by the OS or manually
 FO_SYMBOLS_FILE           = _BASE_DIR / "fo_symbols.txt"            # spot/equity symbols
+SECTOR_SYMBOLS_FILE       = _BASE_DIR / "sector_symbols.json"       # optional extra symbols by sector
 FO_OPTIONS_UNDERLYINGS_FILE = _BASE_DIR / "fo_options_underlyings.txt"  # option chain underlyings
 
 # Exchange prefixes used when building WebSocket instrument codes
@@ -320,6 +321,53 @@ def send_boot_warning(unmatched: set[str], cfg: dict) -> None:
     except (smtplib.SMTPException, OSError, TimeoutError) as exc:
         log.error("Boot-warning email FAILED: %s. Harvester will continue.", exc)
 
+def _load_sector_symbols(sector_file: Path) -> set[str]:
+    """
+    Read optional sector_symbols.json and return a flattened symbol set.
+
+    Expected schema:
+      {
+        "IT": ["TCS", "INFY"],
+        "BANKING": ["HDFCBANK", "SBIN"]
+      }
+    """
+    if not sector_file.exists():
+        log.info("sector_symbols.json not found at %s — continuing with fo_symbols.txt only.", sector_file)
+        return set()
+
+    try:
+        with open(sector_file, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {sector_file}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{sector_file} must be a JSON object mapping sector names to symbol arrays."
+        )
+
+    symbols: set[str] = set()
+    sector_count = 0
+    for sector_name, sector_symbols in raw.items():
+        if not isinstance(sector_symbols, list):
+            raise ValueError(
+                f"{sector_file}: sector '{sector_name}' must contain a JSON array of symbols."
+            )
+        sector_count += 1
+        for raw_symbol in sector_symbols:
+            symbol = str(raw_symbol).strip().upper()
+            if symbol:
+                symbols.add(symbol)
+
+    print(f"sector_symbols.json loaded: sectors={sector_count}, symbols={len(symbols)}")
+    log.info(
+        "sector_symbols.json  →  %d sector(s), %d unique symbol(s) loaded.",
+        sector_count,
+        len(symbols),
+    )
+    return symbols
+
+
 def _load_fo_symbols(symbols_file: Path) -> set[str]:
     """
     Read fo_symbols.txt and return a set of normalised symbol names.
@@ -350,8 +398,19 @@ def _load_fo_symbols(symbols_file: Path) -> set[str]:
             "Add at least one symbol (e.g. RELIANCE) and restart."
         )
 
+    extra_symbols = _load_sector_symbols(SECTOR_SYMBOLS_FILE)
+    merged_symbols = symbols | extra_symbols
+
     log.info("fo_symbols.txt  →  %d target symbol(s) loaded.", len(symbols))
-    return symbols
+    if extra_symbols:
+        log.info(
+            "Merged symbols from separate list  →  base=%d, extra=%d, total=%d",
+            len(symbols),
+            len(extra_symbols),
+            len(merged_symbols),
+        )
+
+    return merged_symbols
 
 
 def _normalise_master_response(raw: object, exchange: str) -> list[dict]:

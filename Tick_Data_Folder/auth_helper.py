@@ -46,6 +46,7 @@ except ImportError:
     )
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
+SECTOR_SYMBOLS_FILE = Path(__file__).parent / "sector_symbols.json"
 
 # Arbitrary integer echoed back by the OAuth server for CSRF validation.
 _OAUTH_STATE = 12345
@@ -78,6 +79,41 @@ def _validate_config(cfg: dict) -> None:
             f"ERROR: The following fields are missing or empty in config.json:\n"
             + "".join(f"  • {k}\n" for k in missing)
         )
+
+
+def _summarize_sector_symbols() -> None:
+    """Validate optional sector_symbols.json and print a short summary."""
+    if not SECTOR_SYMBOLS_FILE.exists():
+        print("  Note: sector_symbols.json not found (harvester will use fo_symbols.txt only).")
+        return
+
+    try:
+        with open(SECTOR_SYMBOLS_FILE, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except json.JSONDecodeError as exc:
+        print(f"  Warning: sector_symbols.json is invalid JSON — {exc}")
+        return
+    except OSError as exc:
+        print(f"  Warning: Could not read sector_symbols.json — {exc}")
+        return
+
+    if not isinstance(payload, dict):
+        print("  Warning: sector_symbols.json must be a JSON object: {\"SECTOR\": [\"SYMBOL\"]}")
+        return
+
+    symbols: set[str] = set()
+    sectors = 0
+    for sector, items in payload.items():
+        if not isinstance(items, list):
+            print(f"  Warning: sector '{sector}' is not an array; skipped.")
+            continue
+        sectors += 1
+        for raw_symbol in items:
+            symbol = str(raw_symbol).strip().upper()
+            if symbol:
+                symbols.add(symbol)
+
+    print(f"  Sector symbol file ready: sectors={sectors}, symbols={len(symbols)}")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -210,6 +246,7 @@ def main() -> None:
 
     short = access_token[:16] + "…" if len(access_token) > 16 else access_token
     print(f"\n  ✔  access_token saved  ({short})")
+    _summarize_sector_symbols()
     print("\n  Start the harvester:")
     print("    python tick_harvester.py\n")
 
