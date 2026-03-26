@@ -1,0 +1,44 @@
+1.Machine Learning Based Indian Stock Market Forecasting (2025)
+
+Focus: Integrates historical NIFTY 50 data with social sentiment and economic news, utilizing LSTM, Support Vector Machines (SVM), K-Nearest Neighbors (KNN), and Gradient Boosting Regression.
+
+Link: https://ieeexplore.ieee.org/document/10961860/
+
+
+2.SM2PNet: A Deep Learning Approach Towards Indian Stock Market Movement Prediction (2023)
+
+Focus: Utilizes Sequential model Long Short-Term Memory (LSTM) to predict future price movements of equities listed on the National Stock Exchange (NSE) by analyzing highly correlated peer firms.
+
+Link: https://ieeexplore.ieee.org/document/10126344/
+
+
+3.Comprehensive Review on Predictive Analytics in Indian Stock Market With Hybrid Deep Learning Model (2025)
+
+Focus: A deep-dive survey into integrating multiple methodologies, evaluating LSTM, Bidirectional-LSTM, Convolutional Neural Networks (CNN), and Temporal-Fusion Transformers (TF-T) combined with sentiment analysis.
+
+Link: https://ieeexplore.ieee.org/document/11135362/
+
+4.Hybrid LSTM-Transformer Model for Stock Market Prediction: A Deep Learning Approach (July 2025)
+
+Global Focus: This highly recent paper trains on nearly a decade of historical stock data (2015–2024). It addresses the volatility of global markets by combining the short-term memory of LSTMs with the long-range pattern recognition of Transformers. Crucially, it integrates FinBERT (a finance-specific LLM) to process global financial news sentiment alongside technical indicators like MACD and Bollinger Bands.
+
+Link: IEEE Xplore Document 11127241
+
+5.Global Stock Market Prediction Using Transformer-Based Deep Learning Techniques (2024)
+
+Global Focus: This research explicitly moves away from single-country markets to forecast stock market indices across seven major global economies simultaneously: the United States, United Kingdom, China, Japan, Canada, India, and Russia. It proves that modified Transformer architectures outperform traditional models on an international scale.
+
+Link: IEEE Xplore Document 10724893
+
+6.Stock Market Trend Prediction Using Transformer-Based Reinforcement Learning (August 2025)
+
+Global Focus: This paper introduces an AI agent that uses a simulated trading environment to optimize its actions. By combining a Transformer framework with Reinforcement Learning (RL) and global news sentiment, the model actively learned profitable trading strategies, boosting directional accuracy to 75%.
+
+Link: IEEE Xplore Document 11118296
+
+
+7.Stock Price Prediction Using Artificial Intelligence: A Literature Review (March 2024)
+
+Global Focus: A massive systematic analysis of the most influential AI prediction papers published globally from 2020 to 2023. It definitively concludes that hybrid deep learning models utilizing big data analytics are the future of worldwide investment strategies.
+
+Link: IEEE Xplore Document 10459442
