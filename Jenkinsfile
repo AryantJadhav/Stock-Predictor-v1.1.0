@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         BUCKET = "stock-predictor-2026"
-        BASE_DIR = "/home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_data"
+        BASE_DIR = "/home/ubuntu/nse_stock_option/tick_data"
     }
 
     stages {

@@ -41,7 +41,7 @@ NSE_HOLIDAYS_FILE = _BASE_DIR / "nse_holidays.txt"
 NSE_HOLIDAYS_FILE_FALLBACK = _BASE_DIR.parent / "nse_holidays.txt"
 
 # Strict requirement from user:
-DATA_DIR = _BASE_DIR / "Tick_Data_Folder" / "Tick-Data"
+DATA_DIR = _BASE_DIR / "tick_data" / "Tick-Data"
 LOG_FILE = _BASE_DIR / "bse_stock_harvester.log"
 
 EXCHANGE_BSE = "BC"

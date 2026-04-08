@@ -70,7 +70,7 @@ def _build_default_config() -> dict:
     """
     Build initial worker config.json content.
 
-    customer_id and smtp fields are copied from the parent Tick_Data_Folder
+    customer_id and smtp fields are copied from the parent tick_data folder
     config when available so migration is seamless.
     """
     parent_cfg: dict = {}

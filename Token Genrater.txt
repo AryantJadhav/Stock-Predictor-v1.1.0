@@ -4,7 +4,7 @@ ssh -i "D:\Coding\Stock Predictor\Stock-Predictor-v1.1.0\EC2 Key\Stock-Predictio
 
 
 Once inside the EC2 terminal:
-cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+cd /home/ubuntu/nse_stock_option/tick_data
 ../venv/bin/python auth_helper.py
 
 
@@ -24,9 +24,9 @@ Press Ctrl+C to exit the log view. The harvester keeps running in the background
 
 Step 4 — Verify Data Is Flowing
 
-ls /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_data/stock_price_data/
+ls /home/ubuntu/nse_stock_option/tick_data/stock_price_data/
 
 
-Stock-Predictor/Tick_Data_Folder/tick_data/fo_data/06-03-2026
+nse_stock_option/tick_data/fo_data/06-03-2026
 
 

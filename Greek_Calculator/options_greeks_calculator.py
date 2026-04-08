@@ -86,7 +86,7 @@ except ImportError:
 # ── Paths ────────────────────────────────────────────────────────────────────
 _BASE_DIR    = Path(__file__).parent
 _ROOT_DIR    = _BASE_DIR.parent                                   # Stock-Predictor-v1.1.0
-DEFAULT_INPUT_DIR  = _ROOT_DIR / "Tick_Data_Folder" / "tick_data"
+DEFAULT_INPUT_DIR  = _ROOT_DIR / "tick_data"
 DEFAULT_OUTPUT_DIR = _ROOT_DIR / "greeks_output"
 
 # ── Financial parameters ─────────────────────────────────────────────────────
@@ -934,7 +934,7 @@ def main() -> None:
         epilog="""
 Examples:
   python options_greeks_calculator.py
-  python options_greeks_calculator.py --input ..\\Tick_Data_Folder\\tick_data\\
+    python options_greeks_calculator.py --input ..\\tick_data\\
   python options_greeks_calculator.py --input ticks_2026-03-03.csv
   python options_greeks_calculator.py --rate 0.068
         """,

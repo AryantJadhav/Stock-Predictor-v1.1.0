@@ -15,17 +15,17 @@
 #          git clone <repo-url> /home/ubuntu/Stock-Predictor
 #
 #  3.  Create a Python virtualenv and install dependencies:
-#          cd /home/ubuntu/Stock-Predictor
+#          cd /home/ubuntu/nse_stock_option
 #          python3 -m venv venv
 #          venv/bin/pip install --upgrade pip
-#          venv/bin/pip install -r Tick_Data_Folder/requirements.txt
+#          venv/bin/pip install -r tick_data/requirements.txt
 #
 #  4.  Run auth_helper.py ONCE to generate the first access_token:
-#          cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+#          cd /home/ubuntu/nse_stock_option/tick_data
 #          ../venv/bin/python auth_helper.py --request-token <YOUR_TOKEN>
 #
 #  5.  Install this service file:
-#          sudo cp /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_harvester.service \
+#          sudo cp /home/ubuntu/nse_stock_option/tick_data/tick_harvester.service \
 #                  /etc/systemd/system/
 #          sudo systemctl daemon-reload
 #          sudo systemctl enable tick_harvester
@@ -34,7 +34,7 @@
 #  6.  Verify it is running:
 #          sudo systemctl status tick_harvester
 #          sudo journalctl -u tick_harvester -f
-#          tail -f /home/ubuntu/Stock-Predictor/Tick_Data_Folder/harvester.log
+#          tail -f /home/ubuntu/nse_stock_option/tick_data/harvester.log
 #
 #  7.  Stop gracefully (flushes CSV buffer before exit):
 #          sudo systemctl stop tick_harvester
@@ -45,7 +45,7 @@
 #  After you receive the email, log in at the Sharekhan URL, copy the
 #  RequestToken, then run on EC2 (or automate via cron):
 #
-#      cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+#      cd /home/ubuntu/nse_stock_option/tick_data
 #      ../venv/bin/python auth_helper.py --request-token <REQUEST_TOKEN>
 #      sudo systemctl restart tick_harvester
 #
@@ -74,10 +74,10 @@ User=ubuntu
 Group=ubuntu
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-WorkingDirectory=/home/ubuntu/Stock-Predictor/Tick_Data_Folder
+WorkingDirectory=/home/ubuntu/nse_stock_option/tick_data
 
-ExecStart=/home/ubuntu/Stock-Predictor/venv/bin/python \
-          /home/ubuntu/Stock-Predictor/Tick_Data_Folder/tick_harvester.py
+ExecStart=/home/ubuntu/nse_stock_option/venv/bin/python \
+          /home/ubuntu/nse_stock_option/tick_data/tick_harvester.py
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
 # Force IST for all datetime.now() / date.today() calls inside the process.

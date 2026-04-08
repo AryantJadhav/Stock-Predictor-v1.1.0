@@ -8,8 +8,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail   # exit on any error, undefined var, or pipe failure
 
-PROJECT_DIR="/home/ubuntu/Stock-Predictor"
-TICK_DIR="$PROJECT_DIR/Tick_Data_Folder"
+PROJECT_DIR="/home/ubuntu/nse_stock_option"
+TICK_DIR="$PROJECT_DIR/tick_data"
 VENV_DIR="$PROJECT_DIR/venv"
 SERVICE_SRC="$TICK_DIR/tick_harvester.service"
 SERVICE_DST="/etc/systemd/system/tick_harvester.service"

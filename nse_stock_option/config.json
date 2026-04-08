@@ -1,0 +1,38 @@
+{
+    "_comment": "Dedicated config for BSE Stock Data Harveseter worker.",
+    "api_clients": [
+        {
+            "name": "api1",
+            "api_key": "UEje0vilIR7bP07UJcoqmad5yaGy61RP",
+            "secret_key": "8yYfGxhuEsF2aQGOfz6KoF584StLXj1J",
+            "access_token": {
+                "token": ""
+            },
+            "symbols_file": "fo_symbols_api1.txt",
+            "output_subdir": "api1"
+        },
+        {
+            "name": "api2",
+            "api_key": "e9vhAHtUV5pjOpj5FwVaKd8e8e9LnyOQ",
+            "secret_key": "QCgdDPlhaN33gTpRmrMg9frWrLewjw5N",
+            "access_token": {
+                "token": ""
+            },
+            "symbols_file": "fo_symbols_api2.txt",
+            "output_subdir": "api2"
+        }
+    ],
+    "api_key": "UEje0vilIR7bP07UJcoqmad5yaGy61RP",
+    "secret_key": "8yYfGxhuEsF2aQGOfz6KoF584StLXj1J",
+    "customer_id": "3886561",
+    "smtp_sender": "",
+    "smtp_receiver": "",
+    "smtp_password": "",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "access_token": {
+        "token": "",
+        "updated_on": "",
+        "updated_at": ""
+    }
+}

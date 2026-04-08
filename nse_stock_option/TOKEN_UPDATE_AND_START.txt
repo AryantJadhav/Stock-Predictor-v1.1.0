@@ -1,0 +1,262 @@
+================================================================================
+NSE STOCK OPTIONS HARVESTER - TOKEN UPDATE AND STARTUP GUIDE
+================================================================================
+Last Updated: April 8, 2026
+File Location: /home/ubuntu/nse_stock_option/
+EC2 Host: ubuntu@15.206.72.170
+
+================================================================================
+STEP 1: SSH INTO EC2
+================================================================================
+
+Windows PowerShell:
+  $key = "D:\Coding\Stock Predictor\Stock-Predictor-v1.1.0\EC2 Key\NSE Stock Options\NSE-Stock-Option.pem"
+  $ec2 = "ubuntu@15.206.72.170"
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$key" "$ec2"
+
+Linux/Mac:
+  ssh -i "/path/to/NSE-Stock-Option.pem" ubuntu@15.206.72.170
+
+================================================================================
+STEP 2: NAVIGATE TO PROJECT FOLDER
+================================================================================
+
+  cd /home/ubuntu/nse_stock_option
+
+Verify structure:
+  ls -la
+  
+Expected files:
+  ✓ auth_helper.py
+  ✓ config.json
+  ✓ nse_stock_options_harvester.py
+  ✓ requirements.txt
+  ✓ fo_symbols_api1.txt
+  ✓ fo_symbols_api2.txt
+  ✓ nse_holidays.txt
+  ✓ tick_data/
+
+
+================================================================================
+STEP 3: ACTIVATE PYTHON VIRTUAL ENVIRONMENT (FIRST TIME ONLY)
+================================================================================
+
+Create venv (run this once):
+  python3 -m venv venv_nse
+  source venv_nse/bin/activate
+
+Install dependencies:
+  pip install -r requirements.txt
+
+Expected packages:
+  ✓ SharekhanApi
+  ✓ websocket-client
+  ✓ cryptography
+
+
+================================================================================
+STEP 4: GENERATE SHAREKHAN ACCESS TOKENS
+================================================================================
+
+For api1 client:
+  python auth_helper.py --client api1
+
+What to do:
+  1. A browser login URL will be printed on screen
+  2. Open the URL and log in with your Sharekhan account
+  3. After login, browser redirects to: https://redirect/?RequestToken=XXXX
+  4. Copy the RequestToken value (everything after RequestToken=)
+  5. Paste it when prompted: "Enter RequestToken: [PASTE HERE]"
+  6. Script saves token to config.json automatically
+
+For api2 client (if using dual API):
+  python auth_helper.py --client api2
+
+Repeat the same process with your second Sharekhan account.
+
+
+================================================================================
+STEP 5A: VERIFY TOKENS ARE SAVED (OPTIONAL)
+================================================================================
+
+Check config.json:
+  cat config.json | grep -A 3 "access_token"
+
+Look for filled token values:
+  "token": "Your_Token_Here"  ← Should NOT be empty
+
+If tokens are empty, run Step 4 again.
+
+
+================================================================================
+STEP 5B: ALTERNATIVE - AUTOMATED TOKEN GENERATION (IF YOU HAVE RequestToken)
+================================================================================
+
+If you already captured the RequestToken values, run:
+  python auth_helper.py --client api1 --request-token "YOUR_REQUEST_TOKEN_HERE"
+  python auth_helper.py --client api2 --request-token "YOUR_REQUEST_TOKEN_HERE"
+
+This bypasses the browser login step.
+
+
+================================================================================
+STEP 6: START THE HARVESTER
+================================================================================
+
+Ensure venv is activated:
+  source venv_nse/bin/activate
+
+Start harvester (foreground - press Ctrl+C to stop):
+  python nse_stock_options_harvester.py
+
+Expected output:
+  2026-04-08 11:50:34  INFO  MainProcess  NSE Stock Options Harvester starting
+  2026-04-08 11:50:34  INFO  MainProcess  Configured client workers: 2
+  2026-04-08 11:50:34  INFO  worker-api1  [api1] WebSocket connected
+  2026-04-08 11:50:34  INFO  worker-api2  [api2] WebSocket connected
+  2026-04-08 11:50:40  INFO  worker-api1  Live feed subscription sent for 3933 NF instruments
+
+
+================================================================================
+STEP 7: RUN IN BACKGROUND (OPTIONAL - FOR CONTINUOUS DATA COLLECTION)
+================================================================================
+
+Run with nohup (survives SSH disconnection):
+  nohup python nse_stock_options_harvester.py > harvester.log 2>&1 &
+
+This starts the process in background. Ctrl+C won't stop it.
+
+Check if process is running:
+  ps aux | grep nse_stock_options_harvester
+
+View live logs:
+  tail -f harvester.log
+
+Stop the background process:
+  pkill -f nse_stock_options_harvester
+
+
+================================================================================
+STEP 8: MONITOR DATA OUTPUT
+================================================================================
+
+Check harvested CSV files:
+  ls -lh tick_data/api1/
+  ls -lh tick_data/api2/
+
+View sample data:
+  head -20 tick_data/api1/08-04-2026/AXISBANK.csv
+
+Count total ticks:
+  find tick_data -name "*.csv" -exec wc -l {} + | tail -1
+
+Each stock symbol gets:
+  ✓ 21 strike prices (ATM ± 10)
+  ✓ Both CE (Call) and PE (Put) options
+  ✓ Live tick data every update from WebSocket
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Issue: "access_token is missing"
+  → Run: python auth_helper.py --client api1
+  → Make sure you paste the correct RequestToken
+
+Issue: "Connection refused" or "WebSocket failed"
+  → Check internet connectivity
+  → Verify Sharekhan API credentials in config.json
+  → Check if trading hours (9:00 - 15:45 IST) - harvester auto-sleeps outside hours
+
+Issue: "File not found" (fo_symbols_api1.txt)
+  → Verify all files exist: ls -la
+  → Ensure you're in: /home/ubuntu/nse_stock_option/
+
+Issue: Process crashes
+  → Check logs: cat harvester.log | tail -50
+  → Verify config.json is valid JSON: python -c "import json; json.load(open('config.json'))"
+
+
+================================================================================
+QUICK REFERENCE - COMPLETE WORKFLOW
+================================================================================
+
+# SSH into EC2
+ssh -o StrictHostKeyChecking=no -i "$key" "$ec2"
+
+# Navigate to project
+cd /home/ubuntu/nse_stock_option
+
+# Activate venv (first time: python3 -m venv venv_nse && pip install -r requirements.txt)
+source venv_nse/bin/activate
+
+# Generate tokens (manual login)
+python auth_helper.py --client api1
+python auth_helper.py --client api2
+
+# Start harvester
+python nse_stock_options_harvester.py
+
+# OR run in background
+nohup python nse_stock_options_harvester.py > harvester.log 2>&1 &
+
+# Monitor logs
+tail -f harvester.log
+
+# Check data
+find tick_data -name "*.csv" | head -10
+
+
+================================================================================
+IMPORTANT NOTES
+================================================================================
+
+1. TOKENS EXPIRE DAILY
+   → Run auth_helper.py every morning before starting harvester
+   → Tokens are saved automatically to config.json
+
+2. MARKET HOURS ONLY
+   → Harvester collects data: 9:00 AM - 3:45 PM IST (Monday-Friday)
+   → Outside market hours: process sleeps and waits for next session
+   → No trading on NSE holidays (defined in nse_holidays.txt)
+
+3. STRIKE WINDOW
+   → Always collects 21 strikes: ATM ± 10 (per your specification)
+   → Covers both CE and PE options
+   → ~42 total contracts per stock symbol
+
+4. DUAL API SUPPORT
+   → api1 and api2 run as parallel workers
+   → Data written to separate folders: tick_data/api1/ and tick_data/api2/
+   → Each has its own symbols file and output directory
+
+5. DATA ORGANIZATION
+   → tick_data/api1/DD-MM-YYYY/SYMBOL.csv
+   → tick_data/api2/DD-MM-YYYY/SYMBOL.csv
+   → New date folder created automatically at midnight rollover
+
+6. GRACEFUL SHUTDOWN
+   → Press Ctrl+C to stop (foreground)
+   → Process flushes buffered ticks before exiting
+   → All data is saved to CSV files
+
+================================================================================
+SUPPORT & LOGS
+================================================================================
+
+All activity logged to: nse_stock_options_harvester.log
+
+Log level: INFO (verbose but not excessive)
+  Contains: Token generation, WebSocket connection, instrument resolution, errors
+
+View errors:
+  grep ERROR nse_stock_options_harvester.log
+
+View warnings:
+  grep WARNING nse_stock_options_harvester.log
+
+Clear old logs:
+  rm nse_stock_options_harvester.log
+
+================================================================================

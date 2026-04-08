@@ -137,7 +137,7 @@ PERIODIC_FLUSH_INTERVAL = 60  # seconds
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  NSE TRADING HOLIDAYS  ← file-driven, no code change needed
-#  Edit  :  Tick_Data_Folder/nse_holidays.txt  (one DD-MM-YYYY date per line)
+#  Edit  :  tick_data/nse_holidays.txt  (one DD-MM-YYYY date per line)
 #  Loaded:  once at startup by _load_nse_holidays()
 # ─────────────────────────────────────────────────────────────────────────────
 NSE_HOLIDAYS_FILE = _BASE_DIR / "nse_holidays.txt"
@@ -361,7 +361,7 @@ def send_boot_warning(unmatched: set[str], cfg: dict) -> None:
         f"in the Sharekhan NC/BC master list:\n\n"
         f"{bullet_list}\n\n"
         f"--- Action Required ---\n"
-        f"1. Open Tick_Data_Folder/fo_symbols.txt on your EC2 instance.\n"
+        f"1. Open tick_data/fo_symbols.txt on your EC2 instance.\n"
         f"2. Check that each failing symbol matches the exact 'TradingSymbol' "
         f"string in sharekhan.master('NC') (case-sensitive after uppercasing).\n"
         f"3. Run the verification snippet at the top of fo_symbols.txt to dump "

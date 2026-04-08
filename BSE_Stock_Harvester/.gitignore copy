@@ -3,7 +3,7 @@ config.json
 *.env
 
 # Ignore Data Folders and CSVs
-Tick_Data_Folder/
+tick_data/
 *.csv
 
 # Ignore Logs and Python Cache

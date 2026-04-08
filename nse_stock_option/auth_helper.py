@@ -2,7 +2,7 @@
 """
 auth_helper.py
 ==============
-Daily token refresh helper for Sharekhan.
+Daily token refresh helper for Sharekhan (multi-client aware).
 
 The Sharekhan access_token expires every day at midnight IST.
 Run this script each morning before starting the harvester.
@@ -10,30 +10,33 @@ Run this script each morning before starting the harvester.
 HOW IT WORKS
 ------------
 1. Your static credentials (api_key, secret_key, customer_id) are read
-   silently from config.json — you never need to re-enter them.
+    silently from config.json — you never need to re-enter them.
 2. The script prints a login URL and opens it in your browser.
 3. You log in on the Sharekhan website; it redirects you to a URL like:
        https://yourredirect/?RequestToken=XXXX&CustomerId=YYYY
 4. Copy the RequestToken value and paste it here when prompted.
 5. The script exchanges it for a fresh access_token and saves it to
-   config.json automatically.
+    config.json automatically.
 
 Usage:
-    python auth_helper.py
+    python nse_stock_options_auth_helper.py --client api1
+    python nse_stock_options_auth_helper.py --client api2
 
 Automation (cron / Task Scheduler) — pass the token directly:
-    python auth_helper.py --request-token <REQUEST_TOKEN>
+    python nse_stock_options_auth_helper.py --request-token <REQUEST_TOKEN>
 
 Cron example (every weekday at 09:00 IST = 03:30 UTC):
     30 3 * * 1-5  cd /home/ubuntu/tick_harvester && \
-                  venv/bin/python auth_helper.py --request-token "$SK_REQUEST_TOKEN"
+                  venv/bin/python nse_stock_options_auth_helper.py --client api1 --request-token "$SK_REQUEST_TOKEN"
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -46,7 +49,16 @@ except ImportError:
     )
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
+PARENT_CONFIG_FILE = Path(__file__).parent.parent / "tick_data" / "config.json"
 SECTOR_SYMBOLS_FILE = Path(__file__).parent / "sector_symbols.json"
+
+DEFAULT_CLIENT_NAME = "api1"
+
+# Legacy fallback defaults when api_clients is not configured yet.
+# Environment variables (SHAREKHAN_API_KEY / SHAREKHAN_SECRET_KEY) can still
+# override these defaults when needed.
+DEFAULT_API_KEY = "UEje0vilIR7bP07UJcoqmad5yaGy61RP"
+DEFAULT_SECRET_KEY = "8yYfGxhuEsF2aQGOfz6KoF584StLXj1J"
 
 # Arbitrary integer echoed back by the OAuth server for CSRF validation.
 _OAUTH_STATE = 12345
@@ -57,9 +69,63 @@ HEADER  = "═" * 60
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+def _build_default_config() -> dict:
+    """
+    Build initial worker config.json content.
+
+    customer_id and smtp fields are copied from parent folder
+    config when available so migration is seamless.
+    """
+    parent_cfg: dict = {}
+    if PARENT_CONFIG_FILE.exists():
+        try:
+            with open(PARENT_CONFIG_FILE, "r", encoding="utf-8") as fh:
+                maybe_parent = json.load(fh)
+                if isinstance(maybe_parent, dict):
+                    parent_cfg = maybe_parent
+        except (OSError, json.JSONDecodeError):
+            parent_cfg = {}
+
+    customer_id = os.getenv("SHAREKHAN_CUSTOMER_ID", str(parent_cfg.get("customer_id", ""))).strip()
+
+    return {
+        "_comment": "Dedicated config for NSE Stock Options worker.",
+        "api_clients": [
+            {
+                "name": "api1",
+                "api_key": DEFAULT_API_KEY,
+                "secret_key": DEFAULT_SECRET_KEY,
+                "access_token": {
+                    "token": "",
+                    "updated_on": "",
+                    "updated_at": "",
+                },
+                "symbols_file": "fo_symbols_api1.txt",
+                "output_subdir": "api1",
+            }
+        ],
+        "api_key": DEFAULT_API_KEY,
+        "secret_key": DEFAULT_SECRET_KEY,
+        "customer_id": customer_id,
+        "smtp_sender": str(parent_cfg.get("smtp_sender", "")).strip(),
+        "smtp_receiver": str(parent_cfg.get("smtp_receiver", "")).strip(),
+        "smtp_password": str(parent_cfg.get("smtp_password", "")).strip(),
+        "smtp_host": str(parent_cfg.get("smtp_host", "smtp.gmail.com")).strip(),
+        "smtp_port": int(parent_cfg.get("smtp_port", 587)),
+        "access_token": {
+            "token": "",
+            "updated_on": "",
+            "updated_at": "",
+        },
+    }
+
 def _load_config() -> dict:
     if not CONFIG_FILE.exists():
-        sys.exit(f"ERROR: config.json not found at {CONFIG_FILE}")
+        cfg = _build_default_config()
+        with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=4)
+        print(f"INFO: Created worker config at {CONFIG_FILE}")
+        return cfg
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
             return json.load(fh)
@@ -72,13 +138,58 @@ def _save_config(cfg: dict) -> None:
         json.dump(cfg, fh, indent=4)
 
 
-def _validate_config(cfg: dict) -> None:
-    missing = [k for k in ("api_key", "secret_key", "customer_id") if not cfg.get(k)]
+def _get_client_index(cfg: dict, client_name: str) -> int | None:
+    raw_clients = cfg.get("api_clients")
+    if not isinstance(raw_clients, list):
+        return None
+
+    for idx, raw_client in enumerate(raw_clients):
+        if not isinstance(raw_client, dict):
+            continue
+        name = str(raw_client.get("name", "")).strip()
+        if name == client_name:
+            return idx
+    return None
+
+
+def _get_client_credentials(cfg: dict, client_name: str) -> tuple[str, str, int | None]:
+    idx = _get_client_index(cfg, client_name)
+    if idx is not None:
+        client = cfg["api_clients"][idx]
+        api_key = str(client.get("api_key", "")).strip()
+        secret_key = str(client.get("secret_key", "")).strip()
+        return api_key, secret_key, idx
+
+    # Legacy single-client fallback
+    api_key = str(cfg.get("api_key", "")).strip()
+    secret_key = str(cfg.get("secret_key", "")).strip()
+    return api_key, secret_key, None
+
+
+def _validate_config(cfg: dict, client_name: str) -> None:
+    missing = [k for k in ("customer_id",) if not cfg.get(k)]
+
+    api_key, secret_key, _ = _get_client_credentials(cfg, client_name)
+    if not api_key:
+        missing.append("api_key")
+    if not secret_key:
+        missing.append("secret_key")
+
     if missing:
         sys.exit(
             f"ERROR: The following fields are missing or empty in config.json:\n"
             + "".join(f"  • {k}\n" for k in missing)
         )
+
+
+def _apply_worker_credentials(cfg: dict, client_name: str) -> tuple[str, str, int | None]:
+    """Resolve credentials for selected client. Env vars override file values."""
+    file_api_key, file_secret_key, client_idx = _get_client_credentials(cfg, client_name)
+
+    api_key = os.getenv("SHAREKHAN_API_KEY", file_api_key or DEFAULT_API_KEY).strip()
+    secret_key = os.getenv("SHAREKHAN_SECRET_KEY", file_secret_key or DEFAULT_SECRET_KEY).strip()
+
+    return api_key, secret_key, client_idx
 
 
 def _summarize_sector_symbols() -> None:
@@ -123,30 +234,39 @@ def main() -> None:
         description="Refresh the daily Sharekhan access_token and save to config.json"
     )
     parser.add_argument(
+        "--client",
+        metavar="NAME",
+        default=DEFAULT_CLIENT_NAME,
+        help="Client name from config.json api_clients (default: api1).",
+    )
+    parser.add_argument(
         "--request-token",
         metavar="TOKEN",
         default=None,
         help="Supply the request_token directly (for cron/automation).",
     )
     args = parser.parse_args()
+    client_name = str(args.client).strip() or DEFAULT_CLIENT_NAME
 
     # ── Load & validate static credentials ───────────────────────────────────
     cfg = _load_config()
-    _validate_config(cfg)
+    api_key, secret_key, client_idx = _apply_worker_credentials(cfg, client_name)
+    _validate_config(cfg, client_name)
 
     print()
     print(HEADER)
     print("   Sharekhan Daily Token Refresh")
     print(HEADER)
+    print(f"  Client Name : {client_name}")
     print(f"  Customer ID : {cfg['customer_id']}")
-    print(f"  API Key     : {cfg['api_key'][:8]}{'*' * (len(cfg['api_key']) - 8)}")
+    print(f"  API Key     : {api_key[:8]}{'*' * (len(api_key) - 8)}")
 
     # ── Step 1: Build & open login URL ───────────────────────────────────────
     print(f"\n{DIVIDER}")
     print("  STEP 1 — Open the Sharekhan login page")
     print(DIVIDER)
 
-    sk = SharekhanConnect(cfg["api_key"])
+    sk = SharekhanConnect(api_key)
     login_url = sk.login_url(vendor_key="", version_id="")
 
     print(f"\n  {login_url}\n")
@@ -202,7 +322,7 @@ def main() -> None:
     try:
         session = sk.generate_session_without_versionId(
             request_token,
-            cfg["secret_key"],
+            secret_key,
         )
     except Exception as exc:
         sys.exit(
@@ -219,7 +339,7 @@ def main() -> None:
         )
 
     try:
-        access_token = sk.get_access_token(cfg["api_key"], session, _OAUTH_STATE)
+        access_token = sk.get_access_token(api_key, session, _OAUTH_STATE)
     except Exception as exc:
         sys.exit(f"\nERROR: get_access_token failed — {exc}")
 
@@ -241,14 +361,35 @@ def main() -> None:
         )
 
     # ── Step 4: Persist to config.json ───────────────────────────────────────
-    cfg["access_token"] = access_token
+    now = datetime.now()
+
+    # Keep top-level values in sync for backward compatibility.
+    cfg["api_key"] = api_key
+    cfg["secret_key"] = secret_key
+    cfg["access_token"] = {
+        "token": access_token,
+        "updated_on": now.date().isoformat(),
+        "updated_at": now.isoformat(timespec="seconds"),
+    }
+
+    # If multi-client config exists, persist token under the selected client.
+    if client_idx is not None:
+        client = cfg["api_clients"][client_idx]
+        client["api_key"] = api_key
+        client["secret_key"] = secret_key
+        client["access_token"] = {
+            "token": access_token,
+            "updated_on": now.date().isoformat(),
+            "updated_at": now.isoformat(timespec="seconds"),
+        }
+
     _save_config(cfg)
 
     short = access_token[:16] + "…" if len(access_token) > 16 else access_token
     print(f"\n  ✔  access_token saved  ({short})")
     _summarize_sector_symbols()
     print("\n  Start the harvester:")
-    print("    python tick_harvester.py\n")
+    print("    python nse_stock_options_harvester.py\n")
 
 
 if __name__ == "__main__":
