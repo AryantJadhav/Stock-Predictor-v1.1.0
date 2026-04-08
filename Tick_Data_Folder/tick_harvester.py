@@ -24,10 +24,12 @@ Quick-start:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Standard-library imports  (no external RAM hogs)
 # ─────────────────────────────────────────────────────────────────────────────
+import ast
 import csv
 import json
 import logging
 import os
+import re
 import signal
 import smtplib
 import threading
@@ -55,8 +57,10 @@ from SharekhanApi.sharekhanWebsocket import SharekhanWebSocket  # type: ignore  
 _BASE_DIR   = Path(__file__).parent
 CONFIG_FILE    = _BASE_DIR / "config.json"         # your API credentials
 DATA_DIR       = _BASE_DIR / "tick_data"            # root output directory
-STOCK_DATA_DIR = DATA_DIR / "stock_price_data"      # NC / BC spot-price CSVs
-FO_DATA_DIR    = DATA_DIR / "fo_data"               # NF options / futures CSVs
+NSE_STOCK_DATA_DIR = DATA_DIR / "nse_stock_data"    # NC spot-price CSVs
+BSE_STOCK_DATA_DIR = DATA_DIR / "bse_stock_data"    # BC spot-price CSVs
+NSE_FO_DATA_DIR    = DATA_DIR / "nse_fo_data"       # NF options / futures CSVs
+BSE_FO_DATA_DIR    = DATA_DIR / "bse_fo_data"       # BF/BFO options / futures CSVs
 LOG_FILE        = _BASE_DIR / "harvester.log"    # rotated by the OS or manually
 FO_SYMBOLS_FILE           = _BASE_DIR / "fo_symbols.txt"            # spot/equity symbols
 SECTOR_SYMBOLS_FILE       = _BASE_DIR / "sector_symbols.json"       # optional extra symbols by sector
@@ -72,25 +76,38 @@ EXCHANGE_BSE    = "BC"
 EXCHANGE_NSE_FO = "NF"
 EXCHANGE_BSE_FO = "BF"
 
+# Tick exchange → writer bucket mapping.
+# Some payloads label BSE F&O as "BF", others as "BFO".
+EXCHANGE_TO_WRITER_KEY: dict[str, str] = {
+    EXCHANGE_NSE: "nse_stock",
+    EXCHANGE_BSE: "bse_stock",
+    EXCHANGE_NSE_FO: "nse_fo",
+    EXCHANGE_BSE_FO: "bse_fo",
+    "BFO": "bse_fo",
+}
+
 # Symbols that live on BSE rather than NSE — only SENSEX currently
 # (all other F&O underlyings are on NSE).
 BSE_ONLY_SYMBOLS: frozenset[str] = frozenset({"SENSEX"})
 
 # How far ahead (in calendar days) to fetch option contracts.
-# 60 days covers the current weekly + current monthly + next monthly expiry.
-# Increase to 90+ if you also want far-month contracts.
-OPTIONS_EXPIRY_LOOKAHEAD_DAYS: int = 60
+# 95 days safely covers current month + next 2 monthly expiries even when
+# running near month-end, plus index weekly contracts in between.
+OPTIONS_EXPIRY_LOOKAHEAD_DAYS: int = 95
 
 # Number of consecutive weekly expiries to subscribe for NIFTY.
 # 6 = current week + next 5 weeks.  Rolls forward automatically when the
 # front-week expires (the master scan always starts from today).
 NIFTY_WEEKLY_EXPIRY_COUNT: int = 6
 
-# Dynamic strike filter — only subscribe to contracts whose strike price
-# falls within ±STRIKE_FILTER_PCT of the underlying's reference spot price.
-# 0.05 = ±5 %  (e.g. NIFTY at 24 600 → keeps strikes 23 370 – 25 830).
-# Increase to 0.10 for wider coverage; set to 1.0 to effectively disable.
-STRIKE_FILTER_PCT: float = 0.05
+# Number of monthly expiries to subscribe for stock options.
+# 3 = current month + next 2 months (when available in master).
+STOCK_MONTHLY_EXPIRY_COUNT: int = 3
+
+# ATM strike-window filter — for each selected expiry keep ATM plus
+# STRIKE_COUNT_SIDE strikes on each side using index slicing on the sorted
+# available strike list (step-size agnostic for index/equity options).
+STRIKE_COUNT_SIDE: int = 10
 
 # CSV flush threshold – at 500 items the buffer is written to disk and cleared
 BATCH_SIZE = 500
@@ -98,6 +115,21 @@ BATCH_SIZE = 500
 # Reconnect back-off (seconds)
 RECONNECT_DELAY_MIN = 5    # first retry after 5 s
 RECONNECT_DELAY_MAX = 60   # cap the back-off at 60 s
+
+# WebSocket feed subscription pacing.
+# Sending many feed chunks too quickly can cause the broker to accept only a
+# subset, so we pace each request to improve large-list reliability.
+WS_FEED_CHUNK_SIZE = 500
+WS_FEED_CHUNK_DELAY_SEC = 0.35
+WS_FEED_HANDSHAKE_PAUSE_SEC = 0.50
+
+# Empirical live-feed cap per access token/session.
+# When requested codes exceed this cap, the broker streams only a subset.
+MAX_STREAM_SUBSCRIPTION_CODES = 1000
+
+# Discover all currently tradable NF option underlyings directly from broker
+# master so coverage is not limited by stale/incomplete local symbol files.
+AUTO_DISCOVER_NF_OPTION_UNDERLYINGS = True
 
 # Periodic safety flush – even if the buffer never hits 500 items, flush every
 # N seconds so we don't lose data during quiet market periods
@@ -205,6 +237,43 @@ log = logging.getLogger("tick_harvester")
 # ═════════════════════════════════════════════════════════════════════════════
 #  CONFIGURATION LOADER
 # ═════════════════════════════════════════════════════════════════════════════
+def _extract_access_token(raw: object) -> str:
+    """Normalize different access_token shapes into the raw JWT string."""
+    if isinstance(raw, dict):
+        for key in ("token", "access_token", "value", "jwtToken", "jwt_token"):
+            val = raw.get(key)
+            if val is not None:
+                token = str(val).strip()
+                if token:
+                    return token
+        return ""
+
+    if raw is None:
+        return ""
+
+    token = str(raw).strip()
+    if not token:
+        return ""
+
+    # auth_helper may persist dict payload as a Python-literal string.
+    if token.startswith("{") and token.endswith("}"):
+        try:
+            parsed = ast.literal_eval(token)
+        except (ValueError, SyntaxError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return _extract_access_token(parsed)
+
+        try:
+            parsed = json.loads(token)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return _extract_access_token(parsed)
+
+    return token
+
+
 def load_config() -> dict:
     """
     Load credentials from config.json.
@@ -229,10 +298,13 @@ def load_config() -> dict:
             log.warning("Could not read config.json: %s — falling back to env vars", exc)
 
     # Environment-variable overrides
-    cfg["api_key"]      = os.getenv("SHAREKHAN_API_KEY",      cfg.get("api_key",      ""))
-    cfg["secret_key"]   = os.getenv("SHAREKHAN_SECRET_KEY",   cfg.get("secret_key",   ""))
-    cfg["customer_id"]  = os.getenv("SHAREKHAN_CUSTOMER_ID",  cfg.get("customer_id",  ""))
-    cfg["access_token"] = os.getenv("SHAREKHAN_ACCESS_TOKEN", cfg.get("access_token", ""))
+    cfg["api_key"] = os.getenv("SHAREKHAN_API_KEY", cfg.get("api_key", "")).strip()
+    cfg["secret_key"] = os.getenv("SHAREKHAN_SECRET_KEY", cfg.get("secret_key", "")).strip()
+    cfg["customer_id"] = os.getenv("SHAREKHAN_CUSTOMER_ID", cfg.get("customer_id", "")).strip()
+
+    env_access = os.getenv("SHAREKHAN_ACCESS_TOKEN", "").strip()
+    cfg_access = _extract_access_token(cfg.get("access_token", ""))
+    cfg["access_token"] = env_access or cfg_access
 
     if not cfg.get("api_key"):
         raise ValueError("api_key is missing. Fill config.json or set SHAREKHAN_API_KEY.")
@@ -508,8 +580,8 @@ def fetch_dynamic_scrip_codes(
 
     # Symbols to look up on NSE (everything that is NOT BSE-only)
     nse_targets: set[str] = target_symbols - BSE_ONLY_SYMBOLS
-    # Symbols to look up on BSE  (only BSE_ONLY_SYMBOLS that the user listed)
-    bse_targets: set[str] = target_symbols & BSE_ONLY_SYMBOLS
+    # Symbols to look up on BSE (cross-reference all requested symbols)
+    bse_targets: set[str] = target_symbols
 
     instrument_codes: list[str] = []
     matched_symbols:  set[str]  = set()   # track which ones we resolved
@@ -670,7 +742,8 @@ def _read_spot_from_csv(symbol: str) -> float | None:
     that carry no price data in the master lists.
 
     Walks back up to 5 calendar days looking for an existing per-symbol CSV
-    written by CsvBatchWriter in STOCK_DATA_DIR, reads the last data row, and
+    written by CsvBatchWriter in NSE/BSE stock data folders, reads the last
+    data row, and
     returns the LTP (column index 3).
 
     This requires zero extra API calls and works even on a cold startup that
@@ -682,22 +755,24 @@ def _read_spot_from_csv(symbol: str) -> float | None:
     today = date.today()
     for delta in range(0, 6):                           # today → 5 days back
         candidate = today - timedelta(days=delta)
-        csv_path  = STOCK_DATA_DIR / candidate.strftime("%d-%m-%Y") / f"{symbol}.csv"
-        if not csv_path.exists():
-            continue
-        try:
-            last_line: str | None = None
-            with open(csv_path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    stripped = line.strip()
-                    if stripped and not stripped.startswith("Timestamp"):
-                        last_line = stripped
-            if last_line:
-                parts = last_line.split(",")
-                if len(parts) > 3:
-                    return float(parts[3])   # LTP is the 4th column (index 3)
-        except (OSError, ValueError, IndexError):
-            continue
+        day = candidate.strftime("%d-%m-%Y")
+        for base_dir in (NSE_STOCK_DATA_DIR, BSE_STOCK_DATA_DIR):
+            csv_path = base_dir / day / f"{symbol}.csv"
+            if not csv_path.exists():
+                continue
+            try:
+                last_line: str | None = None
+                with open(csv_path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("Timestamp"):
+                            last_line = stripped
+                if last_line:
+                    parts = last_line.split(",")
+                    if len(parts) > 3:
+                        return float(parts[3])   # LTP is the 4th column (index 3)
+            except (OSError, ValueError, IndexError):
+                continue
     return None
 
 
@@ -724,6 +799,182 @@ def _parse_expiry_date(raw: str) -> date | None:
     return None
 
 
+_OPT_SYMBOL_RE = re.compile(r"^(.*?)(\d{2}[A-Z]{3}\d{2})(\d+)(CE|PE)$")
+_FUT_SYMBOL_RE = re.compile(r"^(.*?)(\d{2}[A-Z]{3}\d{2})FUT$")
+
+
+def _parse_code_metadata(code: str) -> tuple[str, str, date, float | None, str | None] | None:
+    """
+    Decode CODE_TO_SYMBOL entry for a subscribed contract code.
+
+    Returns
+    -------
+    (underlying, kind, expiry, strike, opt_type)
+      kind: "OPT" | "FUT"
+      strike / opt_type: only populated for options
+    """
+    symbol = CODE_TO_SYMBOL.get(code, "")
+    if not symbol:
+        return None
+
+    m_opt = _OPT_SYMBOL_RE.match(symbol)
+    if m_opt:
+        underlying, exp_txt, strike_txt, opt_type = m_opt.groups()
+        try:
+            expiry_dt = datetime.strptime(exp_txt, "%d%b%y").date()
+            strike = float(strike_txt)
+        except ValueError:
+            return None
+        return (underlying, "OPT", expiry_dt, strike, opt_type)
+
+    m_fut = _FUT_SYMBOL_RE.match(symbol)
+    if m_fut:
+        underlying, exp_txt = m_fut.groups()
+        try:
+            expiry_dt = datetime.strptime(exp_txt, "%d%b%y").date()
+        except ValueError:
+            return None
+        return (underlying, "FUT", expiry_dt, None, None)
+
+    return None
+
+
+def _rebalance_fo_codes_for_stream_budget(
+    fo_codes: list[str],
+    spot_prices: dict[str, float],
+    budget: int,
+) -> list[str]:
+    """
+    Reduce F&O subscription list to fit the stream budget while maximizing
+    stock coverage.
+
+    Selection priority:
+      1) For each underlying: nearest-expiry ATM CE + ATM PE
+      2) For each underlying: nearest FUT
+      3) Remaining options in round-robin across underlyings
+      4) Remaining futures
+      5) Any unparsed fallback codes
+    """
+    if budget <= 0:
+        return []
+    if len(fo_codes) <= budget:
+        return fo_codes
+
+    options: dict[str, dict[date, dict[str, list[tuple[float, str]]]]] = {}
+    futures: dict[str, list[tuple[date, str]]] = {}
+    fallback_codes: list[str] = []
+
+    for code in fo_codes:
+        meta = _parse_code_metadata(code)
+        if meta is None:
+            fallback_codes.append(code)
+            continue
+
+        underlying, kind, expiry_dt, strike, opt_type = meta
+        if kind == "OPT" and strike is not None and opt_type is not None:
+            spot = spot_prices.get(underlying, 0.0)
+            # Prefer closest strike to spot; if spot missing, pick lower strike first.
+            priority = abs(strike - spot) if spot > 0 else strike
+            options.setdefault(underlying, {}).setdefault(expiry_dt, {}).setdefault(opt_type, []).append((priority, code))
+        elif kind == "FUT":
+            futures.setdefault(underlying, []).append((expiry_dt, code))
+        else:
+            fallback_codes.append(code)
+
+    for und in options:
+        for exp in options[und]:
+            for opt_type in options[und][exp]:
+                options[und][exp][opt_type].sort(key=lambda t: t[0])
+    for und in futures:
+        futures[und].sort(key=lambda t: t[0])
+
+    selected: list[str] = []
+    selected_set: set[str] = set()
+
+    def _try_add(code: str) -> bool:
+        if len(selected) >= budget or code in selected_set:
+            return False
+        selected.append(code)
+        selected_set.add(code)
+        return True
+
+    # Pass 1: nearest-expiry ATM CE/PE for each underlying.
+    for und in sorted(options):
+        nearest_expiry = min(options[und])
+        for opt_type in ("CE", "PE"):
+            rows = options[und][nearest_expiry].get(opt_type, [])
+            if rows:
+                _try_add(rows[0][1])
+        if len(selected) >= budget:
+            break
+
+    # Pass 2: one nearest future per underlying.
+    if len(selected) < budget:
+        for und in sorted(futures):
+            _try_add(futures[und][0][1])
+            if len(selected) >= budget:
+                break
+
+    # Pass 3: round-robin remaining options across underlyings.
+    if len(selected) < budget:
+        remaining: dict[str, list[str]] = {}
+        for und in sorted(options):
+            q: list[str] = []
+            for exp in sorted(options[und]):
+                for opt_type in ("CE", "PE"):
+                    for _prio, code in options[und][exp].get(opt_type, []):
+                        if code not in selected_set:
+                            q.append(code)
+            if q:
+                remaining[und] = q
+
+        active_underlyings = list(remaining.keys())
+        while len(selected) < budget and active_underlyings:
+            next_round: list[str] = []
+            for und in active_underlyings:
+                q = remaining.get(und, [])
+                if not q:
+                    continue
+                if _try_add(q.pop(0)):
+                    if q and len(selected) < budget:
+                        next_round.append(und)
+                if len(selected) >= budget:
+                    break
+            active_underlyings = next_round
+
+    # Pass 4: remaining futures.
+    if len(selected) < budget:
+        for und in sorted(futures):
+            for _exp, code in futures[und]:
+                _try_add(code)
+                if len(selected) >= budget:
+                    break
+            if len(selected) >= budget:
+                break
+
+    # Pass 5: fallback codes in original order.
+    if len(selected) < budget:
+        for code in fo_codes:
+            _try_add(code)
+            if len(selected) >= budget:
+                break
+
+    covered_underlyings: set[str] = set()
+    for code in selected:
+        meta = _parse_code_metadata(code)
+        if meta is not None:
+            covered_underlyings.add(meta[0])
+
+    log.warning(
+        "F&O stream budget applied: requested=%d, budget=%d, selected=%d code(s), covered_underlyings=%d.",
+        len(fo_codes),
+        budget,
+        len(selected),
+        len(covered_underlyings),
+    )
+    return selected
+
+
 def _select_target_expiries(
     sorted_expiries: list[date],
     underlying: str,
@@ -740,7 +991,8 @@ def _select_target_expiries(
     BANKNIFTY    → last available expiry of the current calendar month
                    (NSE monthly, last Thursday); if none remain in the
                    current month, use the last expiry of the next month.
-    All others   → nearest 1 upcoming expiry (safe default)
+    All others   → nearest STOCK_MONTHLY_EXPIRY_COUNT upcoming monthly
+                   expiries (current month + next months).
 
     No weekday is hardcoded — expiry dates come from the broker master so
     the selection is immune to holiday shifts.
@@ -782,21 +1034,36 @@ def _select_target_expiries(
         ]
         return [max(same_month)]
 
-    # SENSEX and any other underlying: take the nearest single expiry.
-    return [future[0]]
+    if underlying == "SENSEX":
+        return [future[0]]
+
+    # Stock options: select first expiry from each distinct calendar month.
+    # This keeps month contracts (current + next months) even if weeklies
+    # are present in the master for the same month.
+    picked: list[date] = []
+    seen_months: set[tuple[int, int]] = set()
+    for d in future:
+        month_key = (d.year, d.month)
+        if month_key in seen_months:
+            continue
+        seen_months.add(month_key)
+        picked.append(d)
+        if len(picked) >= STOCK_MONTHLY_EXPIRY_COUNT:
+            break
+    return picked
 
 
 def fetch_fo_option_codes(
     sharekhan: SharekhanConnect,
     spot_prices: dict[str, float],
-    options_file: Path = FO_OPTIONS_UNDERLYINGS_FILE,
 ) -> list[str]:
     """
     Boot-time resolver for NSE/BSE F&O options chain scrip codes.
 
     Algorithm (two-pass, zero-pandas, O(n) RAM)
     -------------------------------------------
-    1.  Read fo_options_underlyings.txt → target underlying names.
+    1.  Load merged underlying symbols from fo_symbols.txt + sector_symbols.json.
+        Optionally auto-discover full NF options-underlying universe.
     2.  Fill spot-price anchors for index underlyings from the NC master
         (already in spot_prices) or from previously-written CSV files
         (index instruments carry no price in the master static metadata).
@@ -806,42 +1073,64 @@ def fetch_fo_option_codes(
           • CE/PE rows only
           • valid expiry dates (>= today, strike > 0)
           • the full set of distinct expiry dates seen
-    4.  Per-underlying smart expiry selection (Pass 2, pure Python):
-          NIFTY        → nearest upcoming expiry (NSE weekly)
-          SENSEX       → nearest upcoming expiry (BSE weekly on NF master)
+        4.  Per-underlying smart expiry selection (Pass 2, pure Python):
+            NIFTY        → nearest NIFTY_WEEKLY_EXPIRY_COUNT expiries (weekly)
+            SENSEX       → nearest upcoming expiry (BSE weekly)
           BANKNIFTY    → last expiry of the current calendar month (NSE
                           monthly); if none remain, last of the next month.
-          Others       → nearest upcoming expiry (safe default)
+            Others       → nearest STOCK_MONTHLY_EXPIRY_COUNT monthly expiries
+                      (current + next months)
         No weekday is hardcoded — dates come from the broker master so
         the selection is automatically holiday-safe.
-    5.  Within the selected expiry, keep only strikes inside
-        [spot × (1 − STRIKE_FILTER_PCT), spot × (1 + STRIKE_FILTER_PCT)].
-        If no spot anchor is available the strike filter is skipped (all
-        strikes in that expiry are included).
+    5.  Within each selected expiry, choose the ATM strike nearest to spot,
+        then keep ATM plus STRIKE_COUNT_SIDE strikes above and below via
+        sorted-list index slicing. If no spot anchor is available, the
+        strike filter is skipped (all strikes in that expiry are included).
     6.  Build "NF{scripCode}" subscription strings and fill CODE_TO_SYMBOL.
 
     RAM note: the 97 000-row master list is iterated once and then freed;
     only the small matched-code list is retained.
     """
-    if not options_file.exists():
-        log.info(
-            "fo_options_underlyings.txt not found — NF options subscription skipped.\n"
-            "  Create %s with one underlying per line (e.g. NIFTY) to enable.",
-            options_file,
-        )
-        return []
+    configured_underlyings: set[str] = _load_fo_symbols(FO_SYMBOLS_FILE)
+    target_underlyings: set[str] = set(configured_underlyings)
 
-    target_underlyings: set[str] = set()
-    with open(options_file, "r", encoding="utf-8") as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            target_underlyings.add(line.upper())
+    nf_master_records: list[dict] | None = None
+    if AUTO_DISCOVER_NF_OPTION_UNDERLYINGS:
+        try:
+            raw_nf = sharekhan.master(EXCHANGE_NSE_FO)
+            nf_master_records = _normalise_master_response(raw_nf, EXCHANGE_NSE_FO)
+        except Exception as exc:
+            log.warning(
+                "Auto-discovery disabled for this run: sharekhan.master('%s') failed: %s",
+                EXCHANGE_NSE_FO,
+                exc,
+            )
+            nf_master_records = None
 
-    if not target_underlyings:
-        log.info("fo_options_underlyings.txt is empty — NF options subscription skipped.")
-        return []
+        if nf_master_records:
+            discovered_nf: set[str] = set()
+            for record in nf_master_records:
+                opt_type = str(
+                    _get_field(record, "optionType", "OptionType", "option_type") or ""
+                ).strip().upper()
+                if opt_type not in ("CE", "PE"):
+                    continue
+                base_raw = _get_field(
+                    record,
+                    "tradingSymbol", "TradingSymbol", "tradingsymbol", "Symbol", "symbol",
+                )
+                if not base_raw:
+                    continue
+                discovered_nf.add(base_raw.strip().upper())
+
+            if discovered_nf:
+                target_underlyings = discovered_nf | (configured_underlyings & BSE_ONLY_SYMBOLS)
+                log.info(
+                    "Auto-discovered NF option underlyings: discovered=%d, configured=%d, final=%d.",
+                    len(discovered_nf),
+                    len(configured_underlyings),
+                    len(target_underlyings),
+                )
 
     # ── Step 2: spot-price anchors ────────────────────────────────────────
     # Index instruments (NIFTY, BANKNIFTY, SENSEX) have no price data in
@@ -875,7 +1164,11 @@ def fetch_fo_option_codes(
         u: [] for u in target_underlyings
     }
 
-    def _scan_master(exchange: str, universe: set[str]) -> None:
+    def _scan_master(
+        exchange: str,
+        universe: set[str],
+        records_override: list[dict] | None = None,
+    ) -> None:
         """Fetch master for *exchange*, scan rows, populate candidates/expiry_sets."""
         if not universe:
             return
@@ -886,12 +1179,15 @@ def fetch_fo_option_codes(
             len(universe),
             ", ".join(sorted(universe)),
         )
-        try:
-            raw = sharekhan.master(exchange)
-        except Exception as exc:
-            log.error("sharekhan.master('%s') failed: %s — skipping those options.", exchange, exc)
-            return
-        records: list[dict] = _normalise_master_response(raw, exchange)
+        if records_override is not None:
+            records = records_override
+        else:
+            try:
+                raw = sharekhan.master(exchange)
+            except Exception as exc:
+                log.error("sharekhan.master('%s') failed: %s — skipping those options.", exchange, exc)
+                return
+            records = _normalise_master_response(raw, exchange)
         log.info("  %s master rows received: %d", exchange, len(records))
 
         for record in records:
@@ -954,10 +1250,10 @@ def fetch_fo_option_codes(
             expiry_sets[base].add(expiry_dt)
 
     # ── Step 4: fetch masters ─────────────────────────────────────────────
-    _scan_master(EXCHANGE_NSE_FO, nf_underlyings)
+    _scan_master(EXCHANGE_NSE_FO, nf_underlyings, records_override=nf_master_records)
     _scan_master(EXCHANGE_BSE_FO, bf_underlyings)
 
-    # ── Pass 2: smart expiry selection + strike filter per underlying ─────
+    # ── Pass 2: smart expiry selection + ATM-index strike window ──────────
     instrument_codes: list[str] = []
 
     for und in sorted(target_underlyings):
@@ -966,8 +1262,7 @@ def fetch_fo_option_codes(
             log.warning("  %s: no CE/PE records found in master — skipping.", und)
             continue
 
-        # Select target expiries using per-underlying exchange rules.
-        # NIFTY returns up to NIFTY_WEEKLY_EXPIRY_COUNT dates; others return 1.
+        # Select target expiries using per-underlying rules.
         sorted_expiries  = sorted(expiry_sets[und])
         target_expiries  = _select_target_expiries(sorted_expiries, und, today)
         if not target_expiries:
@@ -975,20 +1270,60 @@ def fetch_fo_option_codes(
             continue
 
         target_set   = set(target_expiries)   # O(1) membership test
-        expiry_rule  = "monthly" if und == "BANKNIFTY" else "weekly"
+        if und == "NIFTY":
+            expiry_rule = f"weekly x{NIFTY_WEEKLY_EXPIRY_COUNT}"
+        elif und == "BANKNIFTY":
+            expiry_rule = "monthly x1"
+        elif und == "SENSEX":
+            expiry_rule = "weekly x1"
+        else:
+            expiry_rule = f"monthly x{STOCK_MONTHLY_EXPIRY_COUNT}"
 
-        # Strike bounds (same spot anchor for every selected expiry)
+        # Build an ATM-centered strike window per selected expiry.
+        # This avoids hardcoding strike step-size assumptions.
         spot              = spot_prices.get(und, 0.0)
         use_strike_filter = spot > 0
-        lo = spot * (1.0 - STRIKE_FILTER_PCT) if use_strike_filter else 0.0
-        hi = spot * (1.0 + STRIKE_FILTER_PCT) if use_strike_filter else 0.0
+        target_strikes_by_expiry: dict[date, set[float]] = {}
+        expiry_window_meta: list[tuple[date, float, float, float, int]] = []
+
+        if use_strike_filter:
+            for target_expiry in target_expiries:
+                strikes_for_expiry = {
+                    strike for (expiry_dt, strike, _opt_type, _code, _exchange) in und_candidates
+                    if expiry_dt == target_expiry and strike > 0
+                }
+                if not strikes_for_expiry:
+                    continue
+
+                sorted_strikes: list[float] = sorted(strikes_for_expiry)
+                atm_strike = min(sorted_strikes, key=lambda x: abs(x - spot))
+                atm_idx = sorted_strikes.index(atm_strike)
+
+                start_idx = max(0, atm_idx - STRIKE_COUNT_SIDE)
+                end_idx = min(len(sorted_strikes), atm_idx + STRIKE_COUNT_SIDE + 1)
+                target_strikes = set(sorted_strikes[start_idx:end_idx])
+
+                if target_strikes:
+                    target_strikes_by_expiry[target_expiry] = target_strikes
+                    window_sorted = sorted(target_strikes)
+                    expiry_window_meta.append(
+                        (
+                            target_expiry,
+                            atm_strike,
+                            window_sorted[0],
+                            window_sorted[-1],
+                            len(target_strikes),
+                        )
+                    )
 
         n_before = len(instrument_codes)
         for (expiry_dt, strike, opt_type, code, exchange) in und_candidates:
             if expiry_dt not in target_set:
                 continue
-            if use_strike_filter and not (lo <= strike <= hi):
-                continue
+            if use_strike_filter:
+                target_strikes = target_strikes_by_expiry.get(expiry_dt)
+                if not target_strikes or strike not in target_strikes:
+                    continue
 
             exp_compact = expiry_dt.strftime("%d%b%y").upper()  # e.g. 10MAR26
             sym = f"{und}{exp_compact}{int(strike)}{opt_type}"
@@ -998,15 +1333,29 @@ def fetch_fo_option_codes(
         n_matched    = len(instrument_codes) - n_before
         expiry_labels = ", ".join(d.isoformat() for d in target_expiries)
         if use_strike_filter:
-            log.info(
-                "  %-12s %d expir%s [%s] (%s)  spot=%.2f  "
-                "strikes [%.0f – %.0f]  contracts=%d",
-                und,
-                len(target_expiries),
-                "y" if len(target_expiries) == 1 else "ies",
-                expiry_labels, expiry_rule,
-                spot, lo, hi, n_matched,
-            )
+            if expiry_window_meta:
+                windows = ", ".join(
+                    f"{e.isoformat()}:ATM={atm:.0f}[{w_lo:.0f}-{w_hi:.0f}]/{cnt}"
+                    for (e, atm, w_lo, w_hi, cnt) in expiry_window_meta
+                )
+                log.info(
+                    "  %-12s %d expir%s [%s] (%s)  spot=%.2f  "
+                    "ATM-window(±%d)  %s  contracts=%d",
+                    und,
+                    len(target_expiries),
+                    "y" if len(target_expiries) == 1 else "ies",
+                    expiry_labels, expiry_rule,
+                    spot, STRIKE_COUNT_SIDE, windows, n_matched,
+                )
+            else:
+                log.info(
+                    "  %-12s %d expir%s [%s] (%s)  spot=%.2f  "
+                    "ATM-window could not be built  contracts=%d",
+                    und,
+                    len(target_expiries),
+                    "y" if len(target_expiries) == 1 else "ies",
+                    expiry_labels, expiry_rule, spot, n_matched,
+                )
         else:
             log.info(
                 "  %-12s %d expir%s [%s] (%s)  no spot anchor → "
@@ -1020,9 +1369,9 @@ def fetch_fo_option_codes(
     n_options = len(instrument_codes)
     log.info(
         "  F&O options total: %d contract(s)  "
-        "[smart expiry + ±%.0f%% strike bracket]",
+        "[smart expiry + ATM-window ±%d strikes]",
         n_options,
-        STRIKE_FILTER_PCT * 100,
+        STRIKE_COUNT_SIDE,
     )
 
     # ── Pass 3: add all available futures for each underlying ─────────────
@@ -1088,15 +1437,16 @@ class CsvBatchWriter:
         Detects a date change (midnight rollover), creates the new folder, and logs it.
         Structure: <data_dir>/<DD-MM-YYYY>/<SYMBOL>.csv
         """
-        today = date.today()
+        day_str = datetime.now().strftime("%d-%m-%Y")
+        today = datetime.now().date()
         if today != self._current_date:
             log.info(
                 "Midnight rollover: switching from %s → %s",
                 self._current_date.strftime("%d-%m-%Y"),
-                today.strftime("%d-%m-%Y"),
+                day_str,
             )
             self._current_date = today
-        day_dir = self._dir / self._current_date.strftime("%d-%m-%Y")
+        day_dir = self._dir / day_str
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir / f"{symbol}.csv"
 
@@ -1607,13 +1957,11 @@ class TickHarvester:
     def __init__(
         self,
         access_token:     str,
-        stock_writer:     CsvBatchWriter,
-        fo_writer:        CsvBatchWriter,
+        writers:          dict[str, CsvBatchWriter],
         instrument_codes: list[str],
     ) -> None:
         self._access_token     = access_token
-        self._stock_writer     = stock_writer   # NC / BC spot-price ticks
-        self._fo_writer        = fo_writer      # NF options / futures ticks
+        self._writers          = writers
         self._instrument_codes = instrument_codes   # resolved at boot
         self._sws: SharekhanWebSocket | None = None
         self._shutdown         = threading.Event()
@@ -1626,7 +1974,7 @@ class TickHarvester:
         Gracefully flushes RAM buffer before the process dies.
         """
         sig_name = signal.Signals(signum).name if signum else "programmatic"
-        buffered = len(self._stock_writer) + len(self._fo_writer)
+        buffered = sum(len(w) for w in self._writers.values())
         log.info("Shutdown requested (%s). Flushing %d buffered ticks…", sig_name, buffered)
         self._shutdown.set()
 
@@ -1638,8 +1986,8 @@ class TickHarvester:
                 log.debug("close_connection() raised (harmless): %s", exc)
 
         # Flush whatever is left in RAM to disk
-        self._stock_writer.flush()
-        self._fo_writer.flush()
+        for writer in self._writers.values():
+            writer.flush()
         log.info("Buffer flushed. Shutting down.")
 
     # ── WebSocket callbacks ──────────────────────────────────────────────
@@ -1651,7 +1999,10 @@ class TickHarvester:
           Step 1 — Subscribe to the 'feed' channel (mandatory handshake)
           Step 2 — Request live feed data for specific instruments
         """
-        log.info("WebSocket connected. Subscribing to %d instrument(s)…", len(INSTRUMENT_CODES))
+        log.info(
+            "WebSocket connected. Subscribing to %d instrument(s)…",
+            len(self._instrument_codes),
+        )
 
         # Reset back-off on successful reconnect
         self._reconnect_delay = RECONNECT_DELAY_MIN
@@ -1664,15 +2015,17 @@ class TickHarvester:
         }
         self._sws.subscribe(subscribe_msg)  # type: ignore[union-attr]
 
+        # Give the feed-channel handshake a moment before pushing feed chunks.
+        time.sleep(WS_FEED_HANDSHAKE_PAUSE_SEC)
+
         # ── Step 2: Request live feed for all instruments ──────────────────
         # Feed key "ltp" returns: LTP + OHLC + Volume + VWAP + Bid/Ask — all fields needed.
         # The Sharekhan server rejects subscription strings that are too long (>~2000 codes
         # per message), so we chunk into batches of FEED_CHUNK_SIZE and send multiple
         # fetchData calls.  Each call adds to the active subscription server-side.
-        FEED_CHUNK_SIZE = 500
         chunks = [
-            INSTRUMENT_CODES[i : i + FEED_CHUNK_SIZE]
-            for i in range(0, len(INSTRUMENT_CODES), FEED_CHUNK_SIZE)
+            self._instrument_codes[i : i + WS_FEED_CHUNK_SIZE]
+            for i in range(0, len(self._instrument_codes), WS_FEED_CHUNK_SIZE)
         ]
         for chunk_idx, chunk in enumerate(chunks, start=1):
             feed_msg = {
@@ -1681,9 +2034,17 @@ class TickHarvester:
                 "value":  [",".join(chunk)],
             }
             self._sws.fetchData(feed_msg)  # type: ignore[union-attr]
+            if chunk_idx % 5 == 0 or chunk_idx == len(chunks):
+                log.info(
+                    "Feed subscription progress: %d/%d chunk(s) sent.",
+                    chunk_idx,
+                    len(chunks),
+                )
+            if chunk_idx < len(chunks):
+                time.sleep(WS_FEED_CHUNK_DELAY_SEC)
         log.info(
             "Live-feed subscription sent for %d instrument(s) in %d chunk(s).",
-            len(INSTRUMENT_CODES), len(chunks),
+            len(self._instrument_codes), len(chunks),
         )
 
     def _on_data(self, wsapp: object, message: object) -> None:
@@ -1695,10 +2056,12 @@ class TickHarvester:
         ticks = parse_tick(message)
         if ticks:
             for tick in ticks:
-                if tick.get("Exchange") in (EXCHANGE_NSE_FO, EXCHANGE_BSE_FO):
-                    self._fo_writer.add(tick)
-                else:
-                    self._stock_writer.add(tick)
+                exchange = str(tick.get("Exchange") or "").upper().strip()
+                writer_key = EXCHANGE_TO_WRITER_KEY.get(exchange)
+                if not writer_key:
+                    log.debug("Dropping tick with unsupported exchange '%s'", exchange)
+                    continue
+                self._writers[writer_key].add(tick)
 
     def _on_error(self, wsapp: object, error: object) -> None:
         """Logs WebSocket-level errors without crashing the process."""
@@ -1719,8 +2082,13 @@ class TickHarvester:
         is called or the process is killed.
         """
         log.info(
-            "Tick harvester starting. Instruments=%d  Batch=%d  StockDir=%s  FoDir=%s",
-            len(self._instrument_codes), BATCH_SIZE, STOCK_DATA_DIR, FO_DATA_DIR,
+            "Tick harvester starting. Instruments=%d  Batch=%d  NSE_Stock=%s  BSE_Stock=%s  NSE_FO=%s  BSE_FO=%s",
+            len(self._instrument_codes),
+            BATCH_SIZE,
+            NSE_STOCK_DATA_DIR,
+            BSE_STOCK_DATA_DIR,
+            NSE_FO_DATA_DIR,
+            BSE_FO_DATA_DIR,
         )
 
         attempt = 0
@@ -1755,6 +2123,13 @@ class TickHarvester:
                         return None
                     return data
                 self._sws._parse_binary_data = _fixed_parse_binary  # type: ignore
+
+                # websocket-client >=1.7 passes (ws, code, reason) to on_close.
+                # The SDK expects only (ws), so we shim it for compatibility.
+                def _sdk_on_close_compat(wsapp: object, *_args: object) -> None:
+                    self._sws.on_close(wsapp)  # type: ignore[union-attr]
+
+                self._sws._on_close = _sdk_on_close_compat  # type: ignore[attr-defined]
 
                 # Wire up our callbacks
                 self._sws.on_open  = self._on_open   # type: ignore[assignment]
@@ -1847,7 +2222,7 @@ def main() -> None:
     # This is the only network-blocking call at startup.  On a t3.small the
     # NC master list (~10 000 rows) resolves in < 3 s; BC takes ~1 s.
     try:
-        instrument_codes, spot_prices = fetch_dynamic_scrip_codes(
+        spot_instrument_codes, spot_prices = fetch_dynamic_scrip_codes(
             sharekhan=sharekhan_rest,
             symbols_file=FO_SYMBOLS_FILE,
         )
@@ -1856,20 +2231,40 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     # ── 3b. Resolve NF options chain scrip codes ──────────────────────────
-    # Reads fo_options_underlyings.txt; silently skips if the file is absent.
+    # Uses merged underlyings from fo_symbols.txt + sector_symbols.json.
     # spot_prices (from NC master close) is passed in so fetch_fo_option_codes
-    # can apply the ±STRIKE_FILTER_PCT boundary without an extra API call.
-    fo_option_codes = fetch_fo_option_codes(
+    # can build ATM-centered strike windows without an extra API call.
+    fo_option_codes_full = fetch_fo_option_codes(
         sharekhan=sharekhan_rest,
         spot_prices=spot_prices,
-        options_file=FO_OPTIONS_UNDERLYINGS_FILE,
     )
-    if fo_option_codes:
-        log.info(
-            "Adding %d NF option contract(s) to subscription.",
-            len(fo_option_codes),
+    spot_count = len(spot_instrument_codes)
+    stream_budget_for_fo = max(0, MAX_STREAM_SUBSCRIPTION_CODES - spot_count)
+    if spot_count > MAX_STREAM_SUBSCRIPTION_CODES:
+        log.warning(
+            "Spot instruments (%d) exceed stream cap (%d); truncating spot list before adding F&O.",
+            spot_count,
+            MAX_STREAM_SUBSCRIPTION_CODES,
         )
-        instrument_codes.extend(fo_option_codes)
+        spot_instrument_codes = spot_instrument_codes[:MAX_STREAM_SUBSCRIPTION_CODES]
+        stream_budget_for_fo = 0
+
+    fo_option_codes = _rebalance_fo_codes_for_stream_budget(
+        fo_codes=fo_option_codes_full,
+        spot_prices=spot_prices,
+        budget=stream_budget_for_fo,
+    )
+    if fo_option_codes_full:
+        log.info(
+            "Adding %d/%d NF option contract(s) to subscription (budget=%d).",
+            len(fo_option_codes),
+            len(fo_option_codes_full),
+            stream_budget_for_fo,
+        )
+
+    # Keep F&O contracts first in subscription order so F&O coverage remains
+    # stable even if the broker stream silently truncates oversized requests.
+    instrument_codes = fo_option_codes + spot_instrument_codes
 
     # Update the module-level INSTRUMENT_CODES so external tools / health
     # checks that inspect the variable can see the live list.
@@ -1884,15 +2279,18 @@ def main() -> None:
         " …" if len(instrument_codes) > 10 else "",
     )
 
-    # ── 4. Initialise the CSV writers (one per data category) ───────────
-    stock_writer = CsvBatchWriter(data_dir=STOCK_DATA_DIR, batch_size=BATCH_SIZE)
-    fo_writer    = CsvBatchWriter(data_dir=FO_DATA_DIR,    batch_size=BATCH_SIZE)
+    # ── 4. Initialise writers (NSE/BSE split for stock + F&O) ───────────
+    writers: dict[str, CsvBatchWriter] = {
+        "nse_stock": CsvBatchWriter(data_dir=NSE_STOCK_DATA_DIR, batch_size=BATCH_SIZE),
+        "bse_stock": CsvBatchWriter(data_dir=BSE_STOCK_DATA_DIR, batch_size=BATCH_SIZE),
+        "nse_fo": CsvBatchWriter(data_dir=NSE_FO_DATA_DIR, batch_size=BATCH_SIZE),
+        "bse_fo": CsvBatchWriter(data_dir=BSE_FO_DATA_DIR, batch_size=BATCH_SIZE),
+    }
 
     # ── 5. Initialise the harvester ───────────────────────────────────────
     harvester = TickHarvester(
         access_token=cfg["access_token"],
-        stock_writer=stock_writer,
-        fo_writer=fo_writer,
+        writers=writers,
         instrument_codes=instrument_codes,
     )
 
@@ -1904,7 +2302,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, harvester.request_shutdown)
 
     # ── 7. Start the periodic safety flusher (daemon thread) ──────────────
-    flusher = PeriodicFlusher(writers=[stock_writer, fo_writer], interval=PERIODIC_FLUSH_INTERVAL)
+    flusher = PeriodicFlusher(writers=list(writers.values()), interval=PERIODIC_FLUSH_INTERVAL)
     flusher.start()
 
     # ── 8. Start the token reminder thread (daemon thread) ────────────────

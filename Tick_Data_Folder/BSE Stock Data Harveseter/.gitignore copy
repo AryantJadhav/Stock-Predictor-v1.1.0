@@ -1,0 +1,11 @@
+# Ignore API Credentials
+config.json
+*.env
+
+# Ignore Data Folders and CSVs
+Tick_Data_Folder/
+*.csv
+
+# Ignore Logs and Python Cache
+*.log
+__pycache__/
