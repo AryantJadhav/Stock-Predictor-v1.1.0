@@ -70,7 +70,7 @@ ssh -i "D:\\Coding\\Stock Predictor\\Stock-Predictor-v1.1.0\\EC2 Key\\BSE Index 
 
 
 
-cd /home/ubuntu/bse\_fo
+cd /home/ubuntu/NSE\_Index\_Option\_Future\_Stock\_Future
 
 source venv/bin/activate
 
@@ -88,7 +88,7 @@ python tick\_harvester.py
 
 
 
-aws s3 mv /home/ubuntu/bse\_fo/tick\_data s3://stock-predictor-2026/EC2+Data/NSE\_BSE\_Index\_Options\_Future\_Stock\_Future/ --recursive
+aws s3 mv /home/ubuntu/NSE\_Index\_Option\_Future\_Stock\_Future/tick\_data s3://stock-predictor-2026/EC2+Data/NSE\_BSE\_Index\_Options\_Future\_Stock\_Future/ --recursive
 
 
 
@@ -100,7 +100,7 @@ ssh -i "D:\\Coding\\Stock Predictor\\Stock-Predictor-v1.1.0\\EC2 Key\\Stock-Pred
 
 
 
-cd /home/ubuntu/Stock-Predictor/Tick\_Data\_Folder
+cd /home/ubuntu/NSE\_Stock/Tick\_Data\_Folder
 
 ../venv/bin/python auth\_helper.py
 
@@ -116,5 +116,5 @@ sudo journalctl -u tick\_harvester -f
 
 
 
-aws s3 mv /home/ubuntu/Stock-Predictor/Tick\_Data\_Folder/tick\_data s3://stock-predictor-2026/EC2+Data/Stock\_Data/ --recursive
+aws s3 mv /home/ubuntu/NSE\_Stock/Tick\_Data\_Folder/tick\_data s3://stock-predictor-2026/EC2+Data/Stock\_Data/ --recursive
 
