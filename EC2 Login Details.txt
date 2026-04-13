@@ -1,0 +1,42 @@
+BSE Stock Data EC2 Login
+
+ssh -i "D:\Coding\Stock Predictor\Stock-Predictor-v1.1.0\EC2 Key\BSE Stock Data\BSE Stock Data.pem" ubuntu@13.127.144.204
+
+cd /home/ubuntu/BSE_Stock_Data
+./venv/bin/python auth_helper.py
+
+sudo systemctl restart bse_stock_harvester
+sudo journalctl -u bse_stock_harvester -f
+
+NSE Stock Option Data Ec2 Login
+
+ssh -i "D:\Coding\Stock Predictor\Stock-Predictor-v1.1.0\EC2 Key\NSE Stock Options\NSE-Stock-Option.pem" ubuntu@15.206.72.170
+
+source venv_nse/bin/activate
+
+python auth_helper.py --client api1
+
+python auth_helper.py --client api2
+
+python nse_stock_options_harvester.py
+
+NSE & BSE Index Options & Future & Stock Future Login
+
+ssh -i "D:\Coding\Stock Predictor\Stock-Predictor-v1.1.0\EC2 Key\BSE Index Options & Future & Stock Future\BSE Index Options & Future & Stock Future.pem" ubuntu@3.110.62.224
+
+cd /home/ubuntu/bse_fo
+source venv/bin/activate
+
+python auth_helper.py
+
+NSE Stock Data
+
+cd /home/ubuntu/Stock-Predictor/Tick_Data_Folder
+../venv/bin/python auth_helper.py
+
+sudo systemctl restart tick_harvester
+sudo journalctl -u tick_harvester -f
+
+
+
+

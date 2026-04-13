@@ -1,0 +1,16 @@
+{
+    "_comment": "Dedicated config for BSE Stock Data Harveseter worker.",
+    "api_key": "DBSQx3QGjqUwQQZapqHUX4qwfk4aaICX",
+    "secret_key": "jKdxI46nPcp5af3ETUWOsZKDZo0EFvfG",
+    "customer_id": "3886561",
+    "smtp_sender": "",
+    "smtp_receiver": "",
+    "smtp_password": "",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "access_token": {
+        "token": "eyJ0eXAiOiJnY20iLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJyNEpvdEFRSTIvOVM2TTZFMks3T0dpYUQ1cmFHSnIwSWlSNE5aUmpveitoZ2dTU0wrTWg0UlRoSWgrN2RpUnZjU0xUb29Ib1RhZm16a2lnQkZRSm9Xc1poWEFjMFk4cjNyWUoxK2NLUGFoRURiYWFxOTNaT09WRmI1dHZreEMwd2JLdVNuRlUwdDMzYUZMMm1IOTM4N3JhR080a2txQ3lSUytZbkhYWnVlU2FCdjRDVmkrTGhNck1neXhCRHBSZEo5Y0puWWZ4bEsxQnhSQXM9IiwiaWF0IjoxNzc2MDM0MzQ5LCJleHAiOjE3NzYxMDQ5OTl9.38BuFnUdaqIC7Lj6FZ33trqraXU803s-C7WtRmjaWDA",
+        "updated_on": "2026-04-13",
+        "updated_at": "2026-04-13T04:22:29"
+    }
+}

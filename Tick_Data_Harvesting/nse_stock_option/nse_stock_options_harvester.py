@@ -956,7 +956,7 @@ class TickHarvester:
     def _on_error(self, _wsapp: object, error: object) -> None:
         log.error("WebSocket error: %s", error)
 
-    def _on_close(self, _wsapp: object) -> None:
+    def _on_close(self, *_args: object) -> None:
         log.warning("WebSocket closed by server or network.")
 
     def run(self) -> None:

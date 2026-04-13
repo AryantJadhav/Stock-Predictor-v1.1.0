@@ -1,0 +1,14 @@
+{
+    "_comment_1": "DO NOT commit this file to Git. Add config.json to your .gitignore.",
+    "_comment_2": "Run 'python auth_helper.py' to populate access_token before starting the harvester.",
+    "_comment_smtp": "SMTP alert settings \u2014 used by send_boot_warning(). For Gmail: enable 2FA then generate an App Password at myaccount.google.com/apppasswords.",
+    "api_key": "UKMKAIeMaDHIyvcSza2VUpuwTzQAQ0wN",
+    "secret_key": "0nG9ZiZNVQdDSwC7bSPoS8YsCHxl4XIB",
+    "customer_id": "3886561",
+    "smtp_sender": "jadhavaryant@gmail.com",
+    "smtp_receiver": "jadhav.aryant050@gmail.com",
+    "smtp_password": "zaby fdpy waez hees",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "access_token": "eyJ0eXAiOiJnY20iLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJyNEpvdEFRSTIvOVM2TTZFMks3T0dpYUQ1cmFHSnIwSWlSNE5aUmpveitoZ2dTU0wrTWg0UlRoSWgrN2RpUnZjU0xUb29Ib1RhZm16a2lnQkZRSm9Xc1p3VlJrdVdyRERwNGxBNVB5blRTZ3haN2JROUhzS1BWRnA5NzdFOUZRRWVxdVNuRlUwdDMzYUZMMm1IOTM4N3JhR080a2txQ3lSUytZbkhYWnVlU2FCdjRDVmkrTGhNck1neXl3L25ORXE5YitJVlQ4L1QySEgySlE9IiwiaWF0IjoxNzc2MDM0NDU2LCJleHAiOjE3NzYxMDQ5OTl9.-sf-EJ1MWwf2DExIj4ylj3wpkSDDBFE36unRcqeglN0"
+}

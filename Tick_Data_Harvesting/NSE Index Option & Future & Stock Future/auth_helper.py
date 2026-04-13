@@ -54,8 +54,8 @@ SECTOR_SYMBOLS_FILE = Path(__file__).parent / "sector_symbols.json"
 # Dedicated credentials for this BSE worker.
 # Environment variables (SHAREKHAN_API_KEY / SHAREKHAN_SECRET_KEY) can still
 # override these defaults when needed.
-DEFAULT_API_KEY = "55jzkpLiGdoq2T4ivw1agacE9YXcR6eW"
-DEFAULT_SECRET_KEY = "0Rzu1tGDOOyvwvHUdl7s8s1MRQu21OzX"
+DEFAULT_API_KEY = "DBSQx3QGjqUwQQZapqHUX4qwfk4aaICX"
+DEFAULT_SECRET_KEY = "jKdxI46nPcp5af3ETUWOsZKDZo0EFvfG"
 
 # Arbitrary integer echoed back by the OAuth server for CSRF validation.
 _OAUTH_STATE = 12345

@@ -6,7 +6,9 @@
             "api_key": "UEje0vilIR7bP07UJcoqmad5yaGy61RP",
             "secret_key": "8yYfGxhuEsF2aQGOfz6KoF584StLXj1J",
             "access_token": {
-                "token": ""
+                "token": "eyJ0eXAiOiJnY20iLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJyNEpvdEFRSTIvOVM2TTZFMks3T0dpYUQ1cmFHSnIwSWlSNE5aUmpveitoZ2dTU0wrTWg0UlRoSWgrN2RpUnZjU0xUb29Ib1RhZm16a2lnQkZRSm9Xc1p3V3o0QUs0L1BocUZXbTllT0MzdzNWN1NOMDBNYkxCTkU3S2o4azFVaFpLdVNuRlUwdDMzYUZMMm1IOTM4N3JhR080a2txQ3lSUytZbkhYWnVlU2FCdjRDVmkrTGhNck1neTBEZG5UNHpWRnZWZ0xLYlZtcGlFUzA9IiwiaWF0IjoxNzc2MDM0MjMzLCJleHAiOjE3NzYxMDQ5OTl9.L9-mL1m0W2H4pY_FY7CaFcAX0U2Iman6jxs8aj0lpOc",
+                "updated_on": "2026-04-13",
+                "updated_at": "2026-04-13T04:20:33"
             },
             "symbols_file": "fo_symbols_api1.txt",
             "output_subdir": "api1"
@@ -16,14 +18,14 @@
             "api_key": "e9vhAHtUV5pjOpj5FwVaKd8e8e9LnyOQ",
             "secret_key": "QCgdDPlhaN33gTpRmrMg9frWrLewjw5N",
             "access_token": {
-                "token": ""
+                "token": "eyJ0eXAiOiJnY20iLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJyNEpvdEFRSTIvOVM2TTZFMks3T0dpYUQ1cmFHSnIwSWlSNE5aUmpveitoZ2dTU0wrTWg0UlRoSWgrN2RpUnZjU0xUb29Ib1RhZm16a2lnQkZRSm9Xc1pBSnlJTldySFN2NzR4M04rUlN5RlhXNkMwdzJVZWNFTUY2TmJKeXgwOFphdVNuRlUwdDMzYUZMMm1IOTM4N3JhR080a2txQ3lSUytZbkhYWnVlU2FCdjRDVmkrTGhNck1neTVTa1FnbEkrOCtIN1FWNFh3dVdOSHc9IiwiaWF0IjoxNzc2MDM0MjcwLCJleHAiOjE3NzYxMDQ5OTl9.GVZLlca5afkKopp7oxBF4lkwVdPkkxmwRVsuYOsPNio",
+                "updated_on": "2026-04-13",
+                "updated_at": "2026-04-13T04:21:10"
             },
             "symbols_file": "fo_symbols_api2.txt",
             "output_subdir": "api2"
         }
     ],
-    "api_key": "UEje0vilIR7bP07UJcoqmad5yaGy61RP",
-    "secret_key": "8yYfGxhuEsF2aQGOfz6KoF584StLXj1J",
     "customer_id": "3886561",
     "smtp_sender": "",
     "smtp_receiver": "",
@@ -31,8 +33,10 @@
     "smtp_host": "smtp.gmail.com",
     "smtp_port": 587,
     "access_token": {
-        "token": "",
-        "updated_on": "",
-        "updated_at": ""
-    }
+        "token": "eyJ0eXAiOiJnY20iLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJyNEpvdEFRSTIvOVM2TTZFMks3T0dpYUQ1cmFHSnIwSWlSNE5aUmpveitoZ2dTU0wrTWg0UlRoSWgrN2RpUnZjU0xUb29Ib1RhZm16a2lnQkZRSm9Xc1pBSnlJTldySFN2NzR4M04rUlN5RlhXNkMwdzJVZWNFTUY2TmJKeXgwOFphdVNuRlUwdDMzYUZMMm1IOTM4N3JhR080a2txQ3lSUytZbkhYWnVlU2FCdjRDVmkrTGhNck1neTVTa1FnbEkrOCtIN1FWNFh3dVdOSHc9IiwiaWF0IjoxNzc2MDM0MjcwLCJleHAiOjE3NzYxMDQ5OTl9.GVZLlca5afkKopp7oxBF4lkwVdPkkxmwRVsuYOsPNio",
+        "updated_on": "2026-04-13",
+        "updated_at": "2026-04-13T04:21:10"
+    },
+    "api_key": "e9vhAHtUV5pjOpj5FwVaKd8e8e9LnyOQ",
+    "secret_key": "QCgdDPlhaN33gTpRmrMg9frWrLewjw5N"
 }

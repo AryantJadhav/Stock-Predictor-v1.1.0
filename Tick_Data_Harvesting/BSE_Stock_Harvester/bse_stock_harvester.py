@@ -41,7 +41,7 @@ NSE_HOLIDAYS_FILE = _BASE_DIR / "nse_holidays.txt"
 NSE_HOLIDAYS_FILE_FALLBACK = _BASE_DIR.parent / "nse_holidays.txt"
 
 # Strict requirement from user:
-DATA_DIR = _BASE_DIR / "tick_data" / "Tick-Data"
+DATA_DIR = _BASE_DIR / "tick_data"
 LOG_FILE = _BASE_DIR / "bse_stock_harvester.log"
 
 EXCHANGE_BSE = "BC"
@@ -683,7 +683,7 @@ class TickHarvester:
     def _on_error(self, _wsapp: object, error: object) -> None:
         log.error("WebSocket error: %s", error)
 
-    def _on_close(self, _wsapp: object) -> None:
+    def _on_close(self, _wsapp: object, *_args: object) -> None:
         log.warning("WebSocket closed by server or network.")
 
     def run(self) -> None:
